@@ -1,0 +1,2 @@
+# simbolo-erp
+SIMBOLO
