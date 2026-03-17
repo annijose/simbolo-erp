@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import libsql_experimental as libsql
+import libsql_client
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -29,46 +29,38 @@ TAB_CON = "⚙️ Config"
 TAB_POR = "🏠 Mi Portal"
 TAB_MRE = "📄 Mis Recibos"
 
-# --- 3. CONEXIÓN A LA NUBE (TURSO) ---
-def get_db_conn():
+# --- 3. CONEXIÓN A TURSO (LA NUBE) ---
+def get_client():
     url = st.secrets["TURSO_DATABASE_URL"]
     token = st.secrets["TURSO_AUTH_TOKEN"]
-    return libsql.connect(database=url, auth_token=token)
-
-def ejecutar_query_df(query, params=()):
-    conn = get_db_conn()
-    c = conn.cursor()
-    c.execute(query, params)
-    cols = [desc[0] for desc in c.description] if c.description else []
-    data = c.fetchall()
-    conn.close()
-    return pd.DataFrame(data, columns=cols)
+    return libsql_client.create_client_sync(url=url, auth_token=token)
 
 def init_db():
-    conn = get_db_conn(); c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS movimientos 
-                 (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
-                  categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS configuracion (parametro TEXT PRIMARY KEY, valor REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                 (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS actas 
-                 (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS asistencia 
-                 (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
-    
-    # Usuario Admin base
-    c.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')")
-    
-    # Forzar la carga de la lista base si hay menos de 20 usuarios
-    c.execute("SELECT count(*) FROM usuarios")
-    if c.fetchone()[0] < 20:
-        viejos_miembros = ["Ramón Debrot", "Yovanny Melendez", "Omar Arcano", "Jose Luis Nuñez", "Jorge Delgado", "Angel Rincón", "Carlos Rincón", "JUMAR RENGIFO", "Leonardo Rivas", "Cirpiano Heredia", "José Daniel Meza", "Marcos Penott", "Koxzartc Gonzalez", "Daninger Barreto", "Francisco Gonzalez", "Moisés Penott", "Francisco javier Rivas", "LEOPOLDO CADAVID", "YORGER MAITA", "OSCAR QUINTERO PONCE", "OSCAR QUINTERO GALLER", "LEONEL SALAZAR", "RAYMOND MURO", "Hevelmir Barreto"]
-        for m in viejos_miembros:
-            usr = m.replace(" ", "").lower()
-            c.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (usr, '123', m, 'Maestro Mason', 'Usuario', 0, 0, 'Ninguno'))
-    
-    conn.commit(); conn.close()
+    client = get_client()
+    try:
+        client.execute('''CREATE TABLE IF NOT EXISTS movimientos 
+                     (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
+                      categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS configuracion (parametro TEXT PRIMARY KEY, valor REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                     (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS actas 
+                     (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS asistencia 
+                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
+        
+        # Usuario Admin base
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')")
+        
+        # Forzar la carga de la lista base si hay menos de 20 usuarios
+        res = client.execute("SELECT count(*) FROM usuarios")
+        if res.rows[0][0] < 20:
+            viejos_miembros = ["Ramón Debrot", "Yovanny Melendez", "Omar Arcano", "Jose Luis Nuñez", "Jorge Delgado", "Angel Rincón", "Carlos Rincón", "JUMAR RENGIFO", "Leonardo Rivas", "Cirpiano Heredia", "José Daniel Meza", "Marcos Penott", "Koxzartc Gonzalez", "Daninger Barreto", "Francisco Gonzalez", "Moisés Penott", "Francisco javier Rivas", "LEOPOLDO CADAVID", "YORGER MAITA", "OSCAR QUINTERO PONCE", "OSCAR QUINTERO GALLER", "LEONEL SALAZAR", "RAYMOND MURO", "Hevelmir Barreto"]
+            for m in viejos_miembros:
+                usr = m.replace(" ", "").lower()
+                client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (usr, '123', m, 'Maestro Mason', 'Usuario', 0, 0, 'Ninguno'))
+    finally:
+        client.close()
 
 init_db()
 
@@ -78,10 +70,21 @@ def logout():
     st.rerun()
 
 def leer_datos(tabla="movimientos"):
-    return ejecutar_query_df(f"SELECT * FROM {tabla}")
+    client = get_client()
+    try:
+        res = client.execute(f"SELECT * FROM {tabla}")
+        return pd.DataFrame([list(r) for r in res.rows], columns=res.columns)
+    finally:
+        client.close()
 
 def obtener_miembros():
-    df = ejecutar_query_df("SELECT nombre_qh, grado FROM usuarios")
+    client = get_client()
+    try:
+        res = client.execute("SELECT nombre_qh, grado FROM usuarios")
+        df = pd.DataFrame([list(r) for r in res.rows], columns=res.columns)
+    finally:
+        client.close()
+
     lista_nombres = df['nombre_qh'].tolist()
     dict_grados = {row['nombre_qh']: row['grado'] for _, row in df.iterrows()}
     
@@ -183,16 +186,19 @@ if "logged_in" not in st.session_state:
     st.title("🏛️ S.I.M.B.O.L.O. - Portal Logial")
     u = st.text_input("Usuario"); p = st.text_input("Clave", type="password")
     if st.button("Ingresar", type="primary"):
-        conn = get_db_conn(); c = conn.cursor()
-        c.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND password=?", (u, p))
-        res = c.fetchone(); conn.close()
-        if res:
-            st.session_state["logged_in"] = True
-            is_admin = 1 if res[4] == 'Administrador' else res[5]
-            is_sec = 1 if res[4] == 'Administrador' else res[6]
-            st.session_state["u_info"] = {"u": res[0], "nombre": res[2], "grado": res[3], "rol": res[4], "teso": is_admin, "sec": is_sec, "cargo": res[7]}
-            st.rerun()
-        else: st.error("Acceso denegado")
+        client = get_client()
+        try:
+            res = client.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND password=?", (u, p))
+            if res.rows:
+                row = res.rows[0]
+                st.session_state["logged_in"] = True
+                is_admin = 1 if row[4] == 'Administrador' else row[5]
+                is_sec = 1 if row[4] == 'Administrador' else row[6]
+                st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": row[4], "teso": is_admin, "sec": is_sec, "cargo": row[7]}
+                st.rerun()
+            else: st.error("Acceso denegado")
+        finally:
+            client.close()
 else:
     info = st.session_state["u_info"]
     lista_qh, dict_grados = obtener_miembros()
@@ -215,10 +221,13 @@ else:
                 n_usd = st.number_input("Caja (USD)", min_value=0.0)
                 t_si = st.number_input("Tasa SI", value=st.session_state.tasa_actual)
                 if st.button("💾 Guardar Saldos Iniciales"):
-                    conn = get_db_conn(); c = conn.cursor()
-                    c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-BS', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, t_si, n_bs))
-                    c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-USD', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Caja', 'EFECTIVO', n_usd, t_si, n_usd*t_si))
-                    conn.commit(); conn.close(); st.rerun()
+                    client = get_client()
+                    try:
+                        client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-BS', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, t_si, n_bs))
+                        client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-USD', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Caja', 'EFECTIVO', n_usd, t_si, n_usd*t_si))
+                    finally:
+                        client.close()
+                    st.rerun()
             else:
                 st.success("✅ Saldo Inicial Bloqueado")
             
@@ -281,10 +290,13 @@ else:
                     cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
                     if cols[3].button("🗑️", key=f"del_{it['id_t']}"): st.session_state.carrito.pop(i); st.rerun()
                 if st.button("🚀 Procesar e Imprimir", type="primary", use_container_width=True):
-                    id_m = datetime.now().strftime('%y%m%d%H%M%S'); conn = get_db_conn(); c = conn.cursor()
-                    for idx, item in enumerate(st.session_state.carrito):
-                        c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
-                    conn.commit(); conn.close()
+                    id_m = datetime.now().strftime('%y%m%d%H%M%S')
+                    client = get_client()
+                    try:
+                        for idx, item in enumerate(st.session_state.carrito):
+                            client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
+                    finally:
+                        client.close()
                     
                     grado_actual = dict_grados.get(qh_in, "")
                     pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': ref_t}, st.session_state.carrito, grado_actual)
@@ -311,9 +323,13 @@ else:
                 m_b_e = c_e2.number_input("Bs", key=f"ebs_{st.session_state.eg_key}"); m_u_e = round(m_b_e / t_e, 2); r_e = c_e2.text_input("Referencia", key=f"er_{st.session_state.eg_key}")
             nota_e = c_e2.text_input("Nota", key=f"en_{st.session_state.eg_key}")
             if st.button("Registrar Salida", type="primary"):
-                id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"; conn = get_db_conn(); c = conn.cursor()
-                c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (id_e, str(f_e), ben_e, "EGRESO", cat_e, nota_e, r_e, -abs(m_u_e), t_e, -abs(m_b_e)))
-                conn.commit(); conn.close(); st.session_state.eg_key += 1; st.rerun()
+                id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"
+                client = get_client()
+                try:
+                    client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (id_e, str(f_e), ben_e, "EGRESO", cat_e, nota_e, r_e, -abs(m_u_e), t_e, -abs(m_b_e)))
+                finally:
+                    client.close()
+                st.session_state.eg_key += 1; st.rerun()
 
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
@@ -361,12 +377,15 @@ else:
                     
                     if st.form_submit_button("💾 Guardar Acta y Asistencia"):
                         id_a = f"ACT-{f_a.strftime('%y%m%d')}"
-                        conn = get_db_conn(); c = conn.cursor()
-                        c.execute("INSERT OR REPLACE INTO actas VALUES (?,?,?,?,?)", (id_a, str(f_a), t_a, bosq, g_a))
-                        c.execute("DELETE FROM asistencia WHERE id_acta=?", (id_a,))
-                        for qh in presentes:
-                            c.execute("INSERT INTO asistencia (id_acta, nombre_qh, asistio) VALUES (?,?,?)", (id_a, qh, 1))
-                        conn.commit(); conn.close(); st.success(f"Acta {id_a} y Asistencia registradas."); st.rerun()
+                        client = get_client()
+                        try:
+                            client.execute("INSERT OR REPLACE INTO actas VALUES (?,?,?,?,?)", (id_a, str(f_a), t_a, bosq, g_a))
+                            client.execute("DELETE FROM asistencia WHERE id_acta=?", (id_a,))
+                            for qh in presentes:
+                                client.execute("INSERT INTO asistencia (id_acta, nombre_qh, asistio) VALUES (?,?,?)", (id_a, qh, 1))
+                        finally:
+                            client.close()
+                        st.success(f"Acta {id_a} y Asistencia registradas."); st.rerun()
 
             if not df_actas.empty:
                 st.divider()
@@ -374,7 +393,13 @@ else:
                 id_sel = st.selectbox("Seleccione Acta para imprimir", df_actas['id_acta'].tolist())
                 acta_row = df_actas[df_actas['id_acta'] == id_sel].iloc[0]
                 
-                df_asis = ejecutar_query_df(f"SELECT nombre_qh FROM asistencia WHERE id_acta='{id_sel}' AND asistio=1")
+                client = get_client()
+                try:
+                    res_asis = client.execute("SELECT nombre_qh FROM asistencia WHERE id_acta=? AND asistio=1", (id_sel,))
+                    df_asis = pd.DataFrame([list(r) for r in res_asis.rows], columns=res_asis.columns)
+                finally:
+                    client.close()
+                    
                 lista_presentes = df_asis['nombre_qh'].tolist() if not df_asis.empty else []
                 
                 pdf_acta = generar_pdf_acta(acta_row.to_dict(), lista_presentes)
@@ -383,33 +408,38 @@ else:
             st.divider()
             st.subheader("📈 Reporte de Asistencia y Derecho a Voto")
             
-            df_total = ejecutar_query_df("SELECT count(*) as total FROM actas")
-            total_actas_db = df_total.iloc[0]['total'] if not df_total.empty else 0
-            
-            if total_actas_db > 0:
-                query_reporte = """
-                SELECT u.nombre_qh as 'Q.·.H.·.', u.grado as 'Grado', 
-                       COUNT(a.id_registro) as 'Tenidas Asistidas'
-                FROM usuarios u
-                LEFT JOIN asistencia a ON u.nombre_qh = a.nombre_qh
-                WHERE u.nombre_qh != 'CABALLERO PROFANO'
-                GROUP BY u.nombre_qh, u.grado
-                """
-                df_reporte = ejecutar_query_df(query_reporte)
+            client = get_client()
+            try:
+                res_total = client.execute("SELECT count(*) as total FROM actas")
+                total_actas_db = res_total.rows[0][0] if res_total.rows else 0
                 
-                df_reporte['Tenidas Realizadas'] = total_actas_db
-                df_reporte['% Asistencia'] = round((df_reporte['Tenidas Asistidas'] / total_actas_db) * 100, 1)
-                
-                def calcular_voto(row):
-                    if row['Grado'] in ['Maestro Mason', 'Past Master']:
-                        return "✅ Sí" if row['% Asistencia'] >= 50.0 else "❌ No (Falta asis.)"
-                    return "❌ No (Por Grado)"
-                
-                df_reporte['Derecho a Voto (Elecciones)'] = df_reporte.apply(calcular_voto, axis=1)
-                
-                st.dataframe(df_reporte.style.format({'% Asistencia': '{:.1f}%'}), use_container_width=True)
-            else:
-                st.info("Aún no se han registrado actas para calcular la asistencia.")
+                if total_actas_db > 0:
+                    query_reporte = """
+                    SELECT u.nombre_qh as 'Q.·.H.·.', u.grado as 'Grado', 
+                           COUNT(a.id_registro) as 'Tenidas Asistidas'
+                    FROM usuarios u
+                    LEFT JOIN asistencia a ON u.nombre_qh = a.nombre_qh
+                    WHERE u.nombre_qh != 'CABALLERO PROFANO'
+                    GROUP BY u.nombre_qh, u.grado
+                    """
+                    res_reporte = client.execute(query_reporte)
+                    df_reporte = pd.DataFrame([list(r) for r in res_reporte.rows], columns=res_reporte.columns)
+                    
+                    df_reporte['Tenidas Realizadas'] = total_actas_db
+                    df_reporte['% Asistencia'] = round((df_reporte['Tenidas Asistidas'] / total_actas_db) * 100, 1)
+                    
+                    def calcular_voto(row):
+                        if row['Grado'] in ['Maestro Mason', 'Past Master']:
+                            return "✅ Sí" if row['% Asistencia'] >= 50.0 else "❌ No (Falta asis.)"
+                        return "❌ No (Por Grado)"
+                    
+                    df_reporte['Derecho a Voto (Elecciones)'] = df_reporte.apply(calcular_voto, axis=1)
+                    
+                    st.dataframe(df_reporte.style.format({'% Asistencia': '{:.1f}%'}), use_container_width=True)
+                else:
+                    st.info("Aún no se han registrado actas para calcular la asistencia.")
+            finally:
+                client.close()
 
     # ==========================================
     # MÓDULO ADMINISTRADOR
@@ -432,9 +462,12 @@ else:
                         nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         pt = st.checkbox("Tesorero"); ps = st.checkbox("Secretario")
                         if st.form_submit_button("Guardar"):
-                            conn = get_db_conn(); c = conn.cursor()
-                            c.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (nu.strip().lower(), np, nn.strip(), ng, nr, int(pt), int(ps), ncargo))
-                            conn.commit(); conn.close(); st.rerun()
+                            client = get_client()
+                            try:
+                                client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (nu.strip().lower(), np, nn.strip(), ng, nr, int(pt), int(ps), ncargo))
+                            finally:
+                                client.close()
+                            st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar Grado/Cargo", expanded=True):
                     with st.form("edit_u"):
@@ -442,18 +475,24 @@ else:
                         n_grado = st.selectbox("Actualizar Grado", GRADOS)
                         n_cargo = st.selectbox("Asignar Cargo", CARGOS)
                         if st.form_submit_button("Actualizar Perfil"):
-                            conn = get_db_conn(); c = conn.cursor()
-                            c.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_grado, n_cargo, u_mod))
-                            conn.commit(); conn.close(); st.success("Perfil actualizado"); st.rerun()
+                            client = get_client()
+                            try:
+                                client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_grado, n_cargo, u_mod))
+                            finally:
+                                client.close()
+                            st.success("Perfil actualizado"); st.rerun()
             with c_u3:
                 with st.expander("🔐 Cambiar Clave", expanded=False):
                     with st.form("mod_p"):
                         u_s = st.selectbox("Usuario", df_u['username'].tolist())
                         n_p = st.text_input("Nueva Clave", type="password")
                         if st.form_submit_button("Actualizar"):
-                            conn = get_db_conn(); c = conn.cursor()
-                            c.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
-                            conn.commit(); conn.close(); st.success("Clave actualizada")
+                            client = get_client()
+                            try:
+                                client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
+                            finally:
+                                client.close()
+                            st.success("Clave actualizada")
 
     if TAB_CON in m_tabs:
         with tabs[m_tabs.index(TAB_CON)]:
@@ -461,9 +500,12 @@ else:
             st.error("⚠️ Borrado Definitivo")
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("🚨 VACIAR BASE DE DATOS", type="primary"):
-                    conn = get_db_conn(); c = conn.cursor()
-                    c.execute("DELETE FROM movimientos"); c.execute("DELETE FROM actas"); c.execute("DELETE FROM asistencia")
-                    conn.commit(); conn.close(); logout()
+                    client = get_client()
+                    try:
+                        client.execute("DELETE FROM movimientos"); client.execute("DELETE FROM actas"); client.execute("DELETE FROM asistencia")
+                    finally:
+                        client.close()
+                    logout()
 
     # ==========================================
     # PORTAL DEL HERMANO (USUARIO NORMAL)
