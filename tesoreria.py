@@ -58,15 +58,12 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
                      (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
-        # Usuario Admin base
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')")
         
-        # Forzar la carga de la lista base si hay menos de 20 usuarios
         res = client.execute("SELECT count(*) FROM usuarios")
         if res.rows[0][0] < 20:
             viejos_miembros = ["Ramón Debrot", "Yovanny Melendez", "Omar Arcano", "Jose Luis Nuñez", "Jorge Delgado", "Angel Rincón", "Carlos Rincón", "JUMAR RENGIFO", "Leonardo Rivas", "Cirpiano Heredia", "José Daniel Meza", "Marcos Penott", "Koxzartc Gonzalez", "Daninger Barreto", "Francisco Gonzalez", "Moisés Penott", "Francisco javier Rivas", "LEOPOLDO CADAVID", "YORGER MAITA", "OSCAR QUINTERO PONCE", "OSCAR QUINTERO GALLER", "LEONEL SALAZAR", "RAYMOND MURO", "Hevelmir Barreto"]
             for m in viejos_miembros:
-                # Ahora quita los acentos automáticamente al crear la base
                 usr = quitar_acentos(m.replace(" ", "").lower())
                 client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (usr, '123', m, 'Maestro Mason', 'Usuario', 0, 0, 'Ninguno'))
     finally:
@@ -202,9 +199,17 @@ if "logged_in" not in st.session_state:
             if res.rows:
                 row = res.rows[0]
                 st.session_state["logged_in"] = True
-                is_admin = 1 if row[4] == 'Administrador' else row[5]
-                is_sec = 1 if row[4] == 'Administrador' else row[6]
-                st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": row[4], "teso": is_admin, "sec": is_sec, "cargo": row[7]}
+                
+                # --- ASIGNACIÓN INTELIGENTE DE PERMISOS ---
+                p_rol = row[4]
+                p_cargo = row[7]
+                
+                # Si es Administrador O si su cargo es Tesorero, se le da acceso total a caja.
+                p_teso = 1 if p_rol == 'Administrador' or p_cargo == 'Tesorero' else row[5]
+                # Si es Administrador O si su cargo es Secretario, se le da acceso a actas.
+                p_sec = 1 if p_rol == 'Administrador' or p_cargo == 'Secretario' else row[6]
+                
+                st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": p_rol, "teso": p_teso, "sec": p_sec, "cargo": p_cargo}
                 st.rerun()
             else: st.error("Acceso denegado")
         finally:
@@ -274,7 +279,6 @@ else:
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             
-            # --- NUEVA OPCIÓN: MODO HISTÓRICO ---
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
             es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", help="Usa esto para registrar meses pagados antes del sistema sin alterar la caja.")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}")
@@ -298,7 +302,6 @@ else:
                 
                 ref_t_input = c_i2.text_input("Ref. Pago")
                 
-                # --- APLICAMOS LA LÓGICA DEL MODO HISTÓRICO ---
                 if es_historico:
                     m_t_final = 0.0
                     m_bs_final = 0.0
@@ -562,12 +565,17 @@ else:
                         n_grado = st.selectbox("Actualizar Grado", GRADOS)
                         n_cargo = st.selectbox("Asignar Cargo", CARGOS)
                         if st.form_submit_button("Actualizar Perfil"):
+                            # Auto-ajustamos los permisos ocultos por si el rol lo amerita
+                            n_teso = 1 if n_cargo == 'Tesorero' else 0
+                            n_sec = 1 if n_cargo == 'Secretario' else 0
+                            
                             client = get_client()
                             try:
-                                client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_grado, n_cargo, u_mod))
+                                client.execute("UPDATE usuarios SET grado=?, cargo_logia=?, perm_tesoreria=?, perm_secretaria=? WHERE nombre_qh=?", (n_grado, n_cargo, n_teso, n_sec, u_mod))
                             finally:
                                 client.close()
-                            st.success("Perfil actualizado"); st.rerun()
+                            st.success("Perfil actualizado. (Nota: El Q.·.H.·. debe iniciar sesión nuevamente para ver sus nuevos accesos).")
+                            st.rerun()
             with c_u3:
                 with st.expander("🔐 Cambiar Clave", expanded=False):
                     with st.form("mod_p"):
