@@ -246,7 +246,6 @@ else:
     if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_DIA, TAB_REC, TAB_DAS]
     if info['sec']: m_tabs += [TAB_ACT]
     
-    # Nuevo filtro: Solo el Administrador o el QH con cargo de Hospitalario ven esta pestaña
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
     if is_hosp: m_tabs += [TAB_HOS]
     
@@ -342,7 +341,18 @@ else:
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
             st.subheader("📖 Libro Diario")
-            st.dataframe(leer_datos(), use_container_width=True)
+            df_diario = leer_datos()
+            st.dataframe(df_diario, use_container_width=True)
+            
+            if not df_diario.empty:
+                st.divider()
+                csv_diario = df_diario.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 Exportar Libro Diario a Excel",
+                    data=csv_diario,
+                    file_name=f"Libro_Diario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                )
 
     if TAB_REC in m_tabs:
         with tabs[m_tabs.index(TAB_REC)]:
@@ -462,13 +472,15 @@ else:
                     f_h = c_h1.date_input("Fecha de Tenida", datetime.now())
                     det_h = c_h1.text_input("Detalle / N° de Tenida", placeholder="Ej. Tenida Ordinaria")
                     
-                    m_usd_h = c_h2.number_input("Monto Recolectado (USD)", min_value=0.0)
-                    t_bcv_h = c_h2.number_input("Tasa BCV", value=st.session_state.tasa_actual)
+                    # Ahora los campos son completamente independientes
+                    m_usd_h = c_h2.number_input("Recolectado en USD ($)", min_value=0.0, step=1.0)
+                    m_bs_h = c_h2.number_input("Recolectado en Bs.", min_value=0.0, step=10.0)
+                    t_bcv_h = c_h2.number_input("Tasa BCV del día (Ref.)", value=st.session_state.tasa_actual)
                     
                     if st.form_submit_button("💾 Guardar Recolección"):
-                        m_bs_h = round(m_usd_h * t_bcv_h, 2)
                         client = get_client()
                         try:
+                            # Guarda exactamente lo que el Hospitalario contó en físico
                             client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h), det_h, m_usd_h, t_bcv_h, m_bs_h))
                         finally:
                             client.close()
@@ -479,8 +491,22 @@ else:
             st.subheader("📖 Historial de Recolecciones")
             df_hosp = leer_datos("hospitalario")
             if not df_hosp.empty:
-                st.dataframe(df_hosp[['fecha', 'detalle', 'monto_usd', 'tasa_bcv', 'monto_bs']], use_container_width=True)
-                st.metric("Total Recaudado (Histórico)", f"{df_hosp['monto_usd'].sum():,.2f} $")
+                st.dataframe(df_hosp[['fecha', 'detalle', 'monto_usd', 'monto_bs', 'tasa_bcv']], use_container_width=True)
+                
+                # Mostramos los totales ahorrados de forma independiente
+                col_tot1, col_tot2 = st.columns(2)
+                col_tot1.metric("Total Ahorrado (USD)", f"{df_hosp['monto_usd'].sum():,.2f} $")
+                col_tot2.metric("Total Ahorrado (Bs)", f"{df_hosp['monto_bs'].sum():,.2f} Bs.")
+                
+                # Exportar a Excel
+                st.divider()
+                csv_hosp = df_hosp.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="📥 Exportar Historial a Excel",
+                    data=csv_hosp,
+                    file_name=f"Hospitalario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                )
             else:
                 st.info("Aún no hay fondos registrados en el Saco de Beneficencia.")
 
