@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import sqlite3
+import libsql_experimental as libsql
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -10,7 +10,6 @@ from fpdf import FPDF
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Gestión Logial", layout="wide", page_icon="🏛️")
-DB_NAME = "logia_simbolo_v4.db"
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
 CAT_INGRESO = ["Capitación Mensual", "Deuda Año Anterior", "Cuota Extraordinaria", "Derechos de Iniciación", "Derechos de Pasaje", "Derechos de Exaltación", "Donación / Otros"]
@@ -30,9 +29,23 @@ TAB_CON = "⚙️ Config"
 TAB_POR = "🏠 Mi Portal"
 TAB_MRE = "📄 Mis Recibos"
 
-# --- 3. BASE DE DATOS Y RECUPERACIÓN DE USUARIOS ---
+# --- 3. CONEXIÓN A LA NUBE (TURSO) ---
+def get_db_conn():
+    url = st.secrets["TURSO_DATABASE_URL"]
+    token = st.secrets["TURSO_AUTH_TOKEN"]
+    return libsql.connect(database=url, auth_token=token)
+
+def ejecutar_query_df(query, params=()):
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.execute(query, params)
+    cols = [desc[0] for desc in c.description] if c.description else []
+    data = c.fetchall()
+    conn.close()
+    return pd.DataFrame(data, columns=cols)
+
 def init_db():
-    conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+    conn = get_db_conn(); c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS movimientos 
                  (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
                   categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
@@ -65,13 +78,10 @@ def logout():
     st.rerun()
 
 def leer_datos(tabla="movimientos"):
-    conn = sqlite3.connect(DB_NAME); df = pd.read_sql_query(f"SELECT * FROM {tabla}", conn); conn.close()
-    return df
+    return ejecutar_query_df(f"SELECT * FROM {tabla}")
 
 def obtener_miembros():
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT nombre_qh, grado FROM usuarios", conn)
-    conn.close()
+    df = ejecutar_query_df("SELECT nombre_qh, grado FROM usuarios")
     lista_nombres = df['nombre_qh'].tolist()
     dict_grados = {row['nombre_qh']: row['grado'] for _, row in df.iterrows()}
     
@@ -173,7 +183,7 @@ if "logged_in" not in st.session_state:
     st.title("🏛️ S.I.M.B.O.L.O. - Portal Logial")
     u = st.text_input("Usuario"); p = st.text_input("Clave", type="password")
     if st.button("Ingresar", type="primary"):
-        conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+        conn = get_db_conn(); c = conn.cursor()
         c.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND password=?", (u, p))
         res = c.fetchone(); conn.close()
         if res:
@@ -205,7 +215,7 @@ else:
                 n_usd = st.number_input("Caja (USD)", min_value=0.0)
                 t_si = st.number_input("Tasa SI", value=st.session_state.tasa_actual)
                 if st.button("💾 Guardar Saldos Iniciales"):
-                    conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                    conn = get_db_conn(); c = conn.cursor()
                     c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-BS', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, t_si, n_bs))
                     c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-USD', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Caja', 'EFECTIVO', n_usd, t_si, n_usd*t_si))
                     conn.commit(); conn.close(); st.rerun()
@@ -271,7 +281,7 @@ else:
                     cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
                     if cols[3].button("🗑️", key=f"del_{it['id_t']}"): st.session_state.carrito.pop(i); st.rerun()
                 if st.button("🚀 Procesar e Imprimir", type="primary", use_container_width=True):
-                    id_m = datetime.now().strftime('%y%m%d%H%M%S'); conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                    id_m = datetime.now().strftime('%y%m%d%H%M%S'); conn = get_db_conn(); c = conn.cursor()
                     for idx, item in enumerate(st.session_state.carrito):
                         c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
                     conn.commit(); conn.close()
@@ -301,7 +311,7 @@ else:
                 m_b_e = c_e2.number_input("Bs", key=f"ebs_{st.session_state.eg_key}"); m_u_e = round(m_b_e / t_e, 2); r_e = c_e2.text_input("Referencia", key=f"er_{st.session_state.eg_key}")
             nota_e = c_e2.text_input("Nota", key=f"en_{st.session_state.eg_key}")
             if st.button("Registrar Salida", type="primary"):
-                id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"; conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"; conn = get_db_conn(); c = conn.cursor()
                 c.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (id_e, str(f_e), ben_e, "EGRESO", cat_e, nota_e, r_e, -abs(m_u_e), t_e, -abs(m_b_e)))
                 conn.commit(); conn.close(); st.session_state.eg_key += 1; st.rerun()
 
@@ -351,7 +361,7 @@ else:
                     
                     if st.form_submit_button("💾 Guardar Acta y Asistencia"):
                         id_a = f"ACT-{f_a.strftime('%y%m%d')}"
-                        conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                        conn = get_db_conn(); c = conn.cursor()
                         c.execute("INSERT OR REPLACE INTO actas VALUES (?,?,?,?,?)", (id_a, str(f_a), t_a, bosq, g_a))
                         c.execute("DELETE FROM asistencia WHERE id_acta=?", (id_a,))
                         for qh in presentes:
@@ -364,9 +374,7 @@ else:
                 id_sel = st.selectbox("Seleccione Acta para imprimir", df_actas['id_acta'].tolist())
                 acta_row = df_actas[df_actas['id_acta'] == id_sel].iloc[0]
                 
-                conn = sqlite3.connect(DB_NAME)
-                df_asis = pd.read_sql_query(f"SELECT nombre_qh FROM asistencia WHERE id_acta='{id_sel}' AND asistio=1", conn)
-                conn.close()
+                df_asis = ejecutar_query_df(f"SELECT nombre_qh FROM asistencia WHERE id_acta='{id_sel}' AND asistio=1")
                 lista_presentes = df_asis['nombre_qh'].tolist() if not df_asis.empty else []
                 
                 pdf_acta = generar_pdf_acta(acta_row.to_dict(), lista_presentes)
@@ -375,8 +383,8 @@ else:
             st.divider()
             st.subheader("📈 Reporte de Asistencia y Derecho a Voto")
             
-            conn = sqlite3.connect(DB_NAME)
-            total_actas_db = pd.read_sql_query("SELECT count(*) as total FROM actas", conn).iloc[0]['total']
+            df_total = ejecutar_query_df("SELECT count(*) as total FROM actas")
+            total_actas_db = df_total.iloc[0]['total'] if not df_total.empty else 0
             
             if total_actas_db > 0:
                 query_reporte = """
@@ -387,7 +395,7 @@ else:
                 WHERE u.nombre_qh != 'CABALLERO PROFANO'
                 GROUP BY u.nombre_qh, u.grado
                 """
-                df_reporte = pd.read_sql_query(query_reporte, conn)
+                df_reporte = ejecutar_query_df(query_reporte)
                 
                 df_reporte['Tenidas Realizadas'] = total_actas_db
                 df_reporte['% Asistencia'] = round((df_reporte['Tenidas Asistidas'] / total_actas_db) * 100, 1)
@@ -402,7 +410,6 @@ else:
                 st.dataframe(df_reporte.style.format({'% Asistencia': '{:.1f}%'}), use_container_width=True)
             else:
                 st.info("Aún no se han registrado actas para calcular la asistencia.")
-            conn.close()
 
     # ==========================================
     # MÓDULO ADMINISTRADOR
@@ -425,7 +432,7 @@ else:
                         nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         pt = st.checkbox("Tesorero"); ps = st.checkbox("Secretario")
                         if st.form_submit_button("Guardar"):
-                            conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                            conn = get_db_conn(); c = conn.cursor()
                             c.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (nu.strip().lower(), np, nn.strip(), ng, nr, int(pt), int(ps), ncargo))
                             conn.commit(); conn.close(); st.rerun()
             with c_u2:
@@ -435,7 +442,7 @@ else:
                         n_grado = st.selectbox("Actualizar Grado", GRADOS)
                         n_cargo = st.selectbox("Asignar Cargo", CARGOS)
                         if st.form_submit_button("Actualizar Perfil"):
-                            conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                            conn = get_db_conn(); c = conn.cursor()
                             c.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_grado, n_cargo, u_mod))
                             conn.commit(); conn.close(); st.success("Perfil actualizado"); st.rerun()
             with c_u3:
@@ -444,7 +451,7 @@ else:
                         u_s = st.selectbox("Usuario", df_u['username'].tolist())
                         n_p = st.text_input("Nueva Clave", type="password")
                         if st.form_submit_button("Actualizar"):
-                            conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                            conn = get_db_conn(); c = conn.cursor()
                             c.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
                             conn.commit(); conn.close(); st.success("Clave actualizada")
 
@@ -454,7 +461,7 @@ else:
             st.error("⚠️ Borrado Definitivo")
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("🚨 VACIAR BASE DE DATOS", type="primary"):
-                    conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+                    conn = get_db_conn(); c = conn.cursor()
                     c.execute("DELETE FROM movimientos"); c.execute("DELETE FROM actas"); c.execute("DELETE FROM asistencia")
                     conn.commit(); conn.close(); logout()
 
