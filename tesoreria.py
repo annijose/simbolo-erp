@@ -24,6 +24,7 @@ TAB_DIA = "📖 Diario"
 TAB_REC = "🖨️ Recibos"
 TAB_DAS = "📊 Dashboards"
 TAB_ACT = "📜 Actas y Asistencia"
+TAB_HOS = "❤️ Hospitalario"
 TAB_USU = "👥 Usuarios"
 TAB_CON = "⚙️ Config"
 TAB_POR = "🏠 Mi Portal"
@@ -48,6 +49,8 @@ def init_db():
                      (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
         client.execute('''CREATE TABLE IF NOT EXISTS asistencia 
                      (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
+                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
         # Usuario Admin base
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')")
@@ -242,6 +245,11 @@ else:
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
     if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_DIA, TAB_REC, TAB_DAS]
     if info['sec']: m_tabs += [TAB_ACT]
+    
+    # Nuevo filtro: Solo el Administrador o el QH con cargo de Hospitalario ven esta pestaña
+    is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
+    if is_hosp: m_tabs += [TAB_HOS]
+    
     if info['rol'] == 'Administrador': m_tabs += [TAB_USU, TAB_CON]
     
     tabs = st.tabs(m_tabs)
@@ -442,6 +450,41 @@ else:
                 client.close()
 
     # ==========================================
+    # MÓDULO HOSPITALARIO (SACO DE BENEFICENCIA)
+    # ==========================================
+    if TAB_HOS in m_tabs:
+        with tabs[m_tabs.index(TAB_HOS)]:
+            st.subheader("❤️ Tronco de la Viuda / Saco de Beneficencia")
+            
+            with st.expander("➕ Registrar Nueva Recolección", expanded=True):
+                with st.form("f_hosp", clear_on_submit=True):
+                    c_h1, c_h2 = st.columns(2)
+                    f_h = c_h1.date_input("Fecha de Tenida", datetime.now())
+                    det_h = c_h1.text_input("Detalle / N° de Tenida", placeholder="Ej. Tenida Ordinaria")
+                    
+                    m_usd_h = c_h2.number_input("Monto Recolectado (USD)", min_value=0.0)
+                    t_bcv_h = c_h2.number_input("Tasa BCV", value=st.session_state.tasa_actual)
+                    
+                    if st.form_submit_button("💾 Guardar Recolección"):
+                        m_bs_h = round(m_usd_h * t_bcv_h, 2)
+                        client = get_client()
+                        try:
+                            client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h), det_h, m_usd_h, t_bcv_h, m_bs_h))
+                        finally:
+                            client.close()
+                        st.success("Óbolo registrado exitosamente en la bóveda del Hospitalario.")
+                        st.rerun()
+            
+            st.divider()
+            st.subheader("📖 Historial de Recolecciones")
+            df_hosp = leer_datos("hospitalario")
+            if not df_hosp.empty:
+                st.dataframe(df_hosp[['fecha', 'detalle', 'monto_usd', 'tasa_bcv', 'monto_bs']], use_container_width=True)
+                st.metric("Total Recaudado (Histórico)", f"{df_hosp['monto_usd'].sum():,.2f} $")
+            else:
+                st.info("Aún no hay fondos registrados en el Saco de Beneficencia.")
+
+    # ==========================================
     # MÓDULO ADMINISTRADOR
     # ==========================================
     if TAB_USU in m_tabs:
@@ -502,7 +545,7 @@ else:
                 if st.button("🚨 VACIAR BASE DE DATOS", type="primary"):
                     client = get_client()
                     try:
-                        client.execute("DELETE FROM movimientos"); client.execute("DELETE FROM actas"); client.execute("DELETE FROM asistencia")
+                        client.execute("DELETE FROM movimientos"); client.execute("DELETE FROM actas"); client.execute("DELETE FROM asistencia"); client.execute("DELETE FROM hospitalario")
                     finally:
                         client.close()
                     logout()
