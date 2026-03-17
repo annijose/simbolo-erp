@@ -273,7 +273,10 @@ else:
             
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
+            
+            # --- NUEVA OPCIÓN: MODO HISTÓRICO ---
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
+            es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", help="Usa esto para registrar meses pagados antes del sistema sin alterar la caja.")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}")
             
             with st.expander("➕ Añadir Concepto", expanded=True):
@@ -293,9 +296,20 @@ else:
                 else:
                     d_t = c_i1.text_input("Descripción"); m_t = c_i1.number_input("Monto USD", value=15.0)
                 
-                ref_t = "EFECTIVO" if met_in == "Efectivo USD" else c_i2.text_input("Ref. Pago")
+                ref_t_input = c_i2.text_input("Ref. Pago")
+                
+                # --- APLICAMOS LA LÓGICA DEL MODO HISTÓRICO ---
+                if es_historico:
+                    m_t_final = 0.0
+                    m_bs_final = 0.0
+                    ref_t_final = "MIGRACIÓN HISTÓRICA"
+                else:
+                    m_t_final = m_t
+                    m_bs_final = round(m_t * ts_in, 2)
+                    ref_t_final = "EFECTIVO" if met_in == "Efectivo USD" else ref_t_input
+
                 if c_i3.button("➕ Añadir"):
-                    st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t, "monto_bs": round(m_t*ts_in, 2), "ref": ref_t})
+                    st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_final, "monto_bs": m_bs_final, "ref": ref_t_final})
                     st.rerun()
 
             if st.session_state.carrito:
@@ -313,7 +327,7 @@ else:
                         client.close()
                     
                     grado_actual = dict_grados.get(qh_in, "")
-                    pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': ref_t}, st.session_state.carrito, grado_actual)
+                    pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': st.session_state.carrito[0]['ref']}, st.session_state.carrito, grado_actual)
                     st.session_state.u_recibo = {"bytes": pdf_bytes, "n": f"Recibo_SIMBOLO_{id_m}.pdf"}
                     st.session_state.carrito = []; st.rerun()
             
@@ -534,7 +548,6 @@ else:
                         nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         pt = st.checkbox("Tesorero"); ps = st.checkbox("Secretario")
                         if st.form_submit_button("Guardar"):
-                            # Limpiar acentos del nuevo usuario
                             nu_limpio = quitar_acentos(nu.strip().lower())
                             client = get_client()
                             try:
@@ -572,7 +585,6 @@ else:
         with tabs[m_tabs.index(TAB_CON)]:
             st.subheader("⚙️ Configuración")
             
-            # --- NUEVA HERRAMIENTA DE MANTENIMIENTO ---
             st.write("**🛠️ Mantenimiento del Sistema**")
             if st.button("🧹 Normalizar Nombres de Usuario (Quitar acentos)"):
                 client = get_client()
