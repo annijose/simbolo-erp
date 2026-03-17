@@ -7,12 +7,13 @@ import requests
 from bs4 import BeautifulSoup
 import os
 from fpdf import FPDF
+import unicodedata
 
 # --- 1. CONFIGURACIÓN ---
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Gestión Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
-CAT_INGRESO = ["Capitación Mensual", "Deuda Año Anterior", "Cuota Extraordinaria", "Derechos de Iniciación", "Derechos de Aumento de Salario", "Derechos de Exaltación", "Donación / Otros"]
+CAT_INGRESO = ["Capitación Mensual", "Deuda Año Anterior", "Cuota Extraordinaria", "Derechos de Iniciación", "Derechos de Pasaje", "Derechos de Exaltación", "Donación / Otros"]
 CAT_EGRESO = ["Aporte Gran Logia", "Gastos de Templo", "Servicios (Luz/Agua)", "Comisión Bancaria", "Mantenimiento", "Otros"]
 MESES_ANNO = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 GRADOS = ["Aprendiz", "Compañero", "Maestro Mason", "Past Master"]
@@ -29,6 +30,11 @@ TAB_USU = "👥 Usuarios"
 TAB_CON = "⚙️ Config"
 TAB_POR = "🏠 Mi Portal"
 TAB_MRE = "📄 Mis Recibos"
+
+# --- FUNCIÓN PARA QUITAR ACENTOS ---
+def quitar_acentos(texto):
+    if not texto: return ""
+    return unicodedata.normalize('NFKD', str(texto)).encode('ASCII', 'ignore').decode('utf-8')
 
 # --- 3. CONEXIÓN A TURSO (LA NUBE) ---
 def get_client():
@@ -60,7 +66,8 @@ def init_db():
         if res.rows[0][0] < 20:
             viejos_miembros = ["Ramón Debrot", "Yovanny Melendez", "Omar Arcano", "Jose Luis Nuñez", "Jorge Delgado", "Angel Rincón", "Carlos Rincón", "JUMAR RENGIFO", "Leonardo Rivas", "Cirpiano Heredia", "José Daniel Meza", "Marcos Penott", "Koxzartc Gonzalez", "Daninger Barreto", "Francisco Gonzalez", "Moisés Penott", "Francisco javier Rivas", "LEOPOLDO CADAVID", "YORGER MAITA", "OSCAR QUINTERO PONCE", "OSCAR QUINTERO GALLER", "LEONEL SALAZAR", "RAYMOND MURO", "Hevelmir Barreto"]
             for m in viejos_miembros:
-                usr = m.replace(" ", "").lower()
+                # Ahora quita los acentos automáticamente al crear la base
+                usr = quitar_acentos(m.replace(" ", "").lower())
                 client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (usr, '123', m, 'Maestro Mason', 'Usuario', 0, 0, 'Ninguno'))
     finally:
         client.close()
@@ -472,7 +479,6 @@ else:
                     f_h = c_h1.date_input("Fecha de Tenida", datetime.now())
                     det_h = c_h1.text_input("Detalle / N° de Tenida", placeholder="Ej. Tenida Ordinaria")
                     
-                    # Ahora los campos son completamente independientes
                     m_usd_h = c_h2.number_input("Recolectado en USD ($)", min_value=0.0, step=1.0)
                     m_bs_h = c_h2.number_input("Recolectado en Bs.", min_value=0.0, step=10.0)
                     t_bcv_h = c_h2.number_input("Tasa BCV del día (Ref.)", value=st.session_state.tasa_actual)
@@ -480,7 +486,6 @@ else:
                     if st.form_submit_button("💾 Guardar Recolección"):
                         client = get_client()
                         try:
-                            # Guarda exactamente lo que el Hospitalario contó en físico
                             client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h), det_h, m_usd_h, t_bcv_h, m_bs_h))
                         finally:
                             client.close()
@@ -493,12 +498,10 @@ else:
             if not df_hosp.empty:
                 st.dataframe(df_hosp[['fecha', 'detalle', 'monto_usd', 'monto_bs', 'tasa_bcv']], use_container_width=True)
                 
-                # Mostramos los totales ahorrados de forma independiente
                 col_tot1, col_tot2 = st.columns(2)
                 col_tot1.metric("Total Ahorrado (USD)", f"{df_hosp['monto_usd'].sum():,.2f} $")
                 col_tot2.metric("Total Ahorrado (Bs)", f"{df_hosp['monto_bs'].sum():,.2f} Bs.")
                 
-                # Exportar a Excel
                 st.divider()
                 csv_hosp = df_hosp.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button(
@@ -531,9 +534,11 @@ else:
                         nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         pt = st.checkbox("Tesorero"); ps = st.checkbox("Secretario")
                         if st.form_submit_button("Guardar"):
+                            # Limpiar acentos del nuevo usuario
+                            nu_limpio = quitar_acentos(nu.strip().lower())
                             client = get_client()
                             try:
-                                client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (nu.strip().lower(), np, nn.strip(), ng, nr, int(pt), int(ps), ncargo))
+                                client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (nu_limpio, np, nn.strip(), ng, nr, int(pt), int(ps), ncargo))
                             finally:
                                 client.close()
                             st.rerun()
@@ -566,6 +571,26 @@ else:
     if TAB_CON in m_tabs:
         with tabs[m_tabs.index(TAB_CON)]:
             st.subheader("⚙️ Configuración")
+            
+            # --- NUEVA HERRAMIENTA DE MANTENIMIENTO ---
+            st.write("**🛠️ Mantenimiento del Sistema**")
+            if st.button("🧹 Normalizar Nombres de Usuario (Quitar acentos)"):
+                client = get_client()
+                try:
+                    res_usrs = client.execute("SELECT username FROM usuarios")
+                    for row in res_usrs.rows:
+                        old_u = row[0]
+                        new_u = quitar_acentos(old_u)
+                        if old_u != new_u:
+                            client.execute("UPDATE usuarios SET username=? WHERE username=?", [new_u, old_u])
+                    st.success("¡Usuarios normalizados con éxito! Los acentos han sido eliminados de la base de datos.")
+                except Exception as e:
+                    st.error(f"Error al normalizar: {e}")
+                finally:
+                    client.close()
+            
+            st.divider()
+            
             st.error("⚠️ Borrado Definitivo")
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("🚨 VACIAR BASE DE DATOS", type="primary"):
