@@ -200,13 +200,10 @@ if "logged_in" not in st.session_state:
                 row = res.rows[0]
                 st.session_state["logged_in"] = True
                 
-                # --- ASIGNACIÓN INTELIGENTE DE PERMISOS ---
                 p_rol = row[4]
                 p_cargo = row[7]
                 
-                # Si es Administrador O si su cargo es Tesorero, se le da acceso total a caja.
                 p_teso = 1 if p_rol == 'Administrador' or p_cargo == 'Tesorero' else row[5]
-                # Si es Administrador O si su cargo es Secretario, se le da acceso a actas.
                 p_sec = 1 if p_rol == 'Administrador' or p_cargo == 'Secretario' else row[6]
                 
                 st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": p_rol, "teso": p_teso, "sec": p_sec, "cargo": p_cargo}
@@ -217,6 +214,7 @@ if "logged_in" not in st.session_state:
 else:
     info = st.session_state["u_info"]
     lista_qh, dict_grados = obtener_miembros()
+    is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
     
     with st.sidebar:
         st.title("🏛️ S.I.M.B.O.L.O.")
@@ -248,9 +246,39 @@ else:
             
             b_bs = df_actual[~df_actual['referencia'].str.contains("EFECTIVO", case=False, na=False)]['monto_bs'].sum()
             c_usd = df_actual[df_actual['referencia'].str.contains("EFECTIVO", case=False, na=False)]['monto_usd'].sum()
-            st.divider()
             st.metric("🏦 Banco Actual", f"{b_bs:,.2f} Bs.")
             st.metric("💵 Caja Actual", f"{c_usd:,.2f} $")
+
+        # --- NUEVO: RESUMEN HOSPITALARIO EN SIDEBAR ---
+        if is_hosp:
+            st.divider()
+            st.header("❤️ Resumen Hospitalario")
+            df_hosp_all = leer_datos("hospitalario")
+            si_hosp_registrado = not df_hosp_all[df_hosp_all['detalle'] == 'SALDO INICIAL'].empty
+
+            if not si_hosp_registrado:
+                st.warning("⚠️ Pendiente Saldo Inicial Hosp.")
+                f_si_h = st.date_input("Fecha Inicio Hosp.", datetime.now())
+                n_usd_h = st.number_input("Caja Hosp. (USD)", min_value=0.0, step=1.0)
+                n_bs_h = st.number_input("Caja Hosp. (Bs)", min_value=0.0, step=10.0)
+                t_si_h = st.number_input("Tasa SI Hosp.", value=st.session_state.tasa_actual)
+                if st.button("💾 Guardar Saldo Inicial Hosp."):
+                    client = get_client()
+                    try:
+                        client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_si_h), 'SALDO INICIAL', n_usd_h, t_si_h, n_bs_h))
+                    finally:
+                        client.close()
+                    st.rerun()
+            else:
+                st.success("✅ Saldo Inicial Hosp. Bloqueado")
+
+            tot_usd_h = df_hosp_all['monto_usd'].sum() if not df_hosp_all.empty else 0.0
+            tot_bs_h = df_hosp_all['monto_bs'].sum() if not df_hosp_all.empty else 0.0
+            
+            col_h1, col_h2 = st.columns(2)
+            col_h1.metric("Fondo (USD)", f"{tot_usd_h:,.2f} $")
+            col_h2.metric("Fondo (Bs)", f"{tot_bs_h:,.2f} Bs.")
+
 
     # --- PESTAÑAS BLINDADAS ---
     m_tabs = []
@@ -258,7 +286,6 @@ else:
     if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_DIA, TAB_REC, TAB_DAS]
     if info['sec']: m_tabs += [TAB_ACT]
     
-    is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
     if is_hosp: m_tabs += [TAB_HOS]
     
     if info['rol'] == 'Administrador': m_tabs += [TAB_USU, TAB_CON]
@@ -490,34 +517,50 @@ else:
         with tabs[m_tabs.index(TAB_HOS)]:
             st.subheader("❤️ Tronco de la Viuda / Saco de Beneficencia")
             
-            with st.expander("➕ Registrar Nueva Recolección", expanded=True):
-                with st.form("f_hosp", clear_on_submit=True):
-                    c_h1, c_h2 = st.columns(2)
-                    f_h = c_h1.date_input("Fecha de Tenida", datetime.now())
-                    det_h = c_h1.text_input("Detalle / N° de Tenida", placeholder="Ej. Tenida Ordinaria")
-                    
-                    m_usd_h = c_h2.number_input("Recolectado en USD ($)", min_value=0.0, step=1.0)
-                    m_bs_h = c_h2.number_input("Recolectado en Bs.", min_value=0.0, step=10.0)
-                    t_bcv_h = c_h2.number_input("Tasa BCV del día (Ref.)", value=st.session_state.tasa_actual)
-                    
-                    if st.form_submit_button("💾 Guardar Recolección"):
-                        client = get_client()
-                        try:
-                            client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h), det_h, m_usd_h, t_bcv_h, m_bs_h))
-                        finally:
-                            client.close()
-                        st.success("Óbolo registrado exitosamente en la bóveda del Hospitalario.")
-                        st.rerun()
+            col_ing_h, col_egr_h = st.columns(2)
+            
+            with col_ing_h:
+                with st.expander("➕ Registrar Ingreso (Óbolo)", expanded=True):
+                    with st.form("f_hosp_ing", clear_on_submit=True):
+                        f_h_i = st.date_input("Fecha de Tenida", datetime.now(), key="f_h_i")
+                        det_h_i = st.text_input("Detalle / N° de Tenida", placeholder="Ej. Tenida Ordinaria", key="det_h_i")
+                        m_usd_h_i = st.number_input("Recolectado en USD ($)", min_value=0.0, step=1.0, key="usd_i")
+                        m_bs_h_i = st.number_input("Recolectado en Bs.", min_value=0.0, step=10.0, key="bs_i")
+                        t_bcv_h_i = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_i")
+                        
+                        if st.form_submit_button("💾 Guardar Ingreso"):
+                            client = get_client()
+                            try:
+                                client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_i), f"INGRESO: {det_h_i}", m_usd_h_i, t_bcv_h_i, m_bs_h_i))
+                            finally:
+                                client.close()
+                            st.success("Óbolo registrado exitosamente.")
+                            st.rerun()
+
+            with col_egr_h:
+                with st.expander("📤 Registrar Egreso (Ayuda)", expanded=True):
+                    with st.form("f_hosp_egr", clear_on_submit=True):
+                        f_h_e = st.date_input("Fecha", datetime.now(), key="f_h_e")
+                        det_h_e = st.text_input("Beneficiario / Motivo", placeholder="Ej. Ayuda Q.H. Perez", key="det_h_e")
+                        m_usd_h_e = st.number_input("Monto a entregar USD ($)", min_value=0.0, step=1.0, key="usd_e")
+                        m_bs_h_e = st.number_input("Monto a entregar Bs.", min_value=0.0, step=10.0, key="bs_e")
+                        t_bcv_h_e = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_e")
+                        
+                        if st.form_submit_button("💾 Guardar Egreso"):
+                            client = get_client()
+                            try:
+                                # Los egresos se guardan en negativo para que la suma del fondo sea correcta
+                                client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_e), f"EGRESO: {det_h_e}", -abs(m_usd_h_e), t_bcv_h_e, -abs(m_bs_h_e)))
+                            finally:
+                                client.close()
+                            st.success("Egreso registrado exitosamente.")
+                            st.rerun()
             
             st.divider()
-            st.subheader("📖 Historial de Recolecciones")
+            st.subheader("📖 Historial del Saco de Beneficencia")
             df_hosp = leer_datos("hospitalario")
             if not df_hosp.empty:
                 st.dataframe(df_hosp[['fecha', 'detalle', 'monto_usd', 'monto_bs', 'tasa_bcv']], use_container_width=True)
-                
-                col_tot1, col_tot2 = st.columns(2)
-                col_tot1.metric("Total Ahorrado (USD)", f"{df_hosp['monto_usd'].sum():,.2f} $")
-                col_tot2.metric("Total Ahorrado (Bs)", f"{df_hosp['monto_bs'].sum():,.2f} Bs.")
                 
                 st.divider()
                 csv_hosp = df_hosp.to_csv(index=False, encoding='utf-8-sig')
@@ -528,7 +571,7 @@ else:
                     mime="text/csv",
                 )
             else:
-                st.info("Aún no hay fondos registrados en el Saco de Beneficencia.")
+                st.info("Aún no hay movimientos registrados en el Saco de Beneficencia.")
 
     # ==========================================
     # MÓDULO ADMINISTRADOR
@@ -565,7 +608,6 @@ else:
                         n_grado = st.selectbox("Actualizar Grado", GRADOS)
                         n_cargo = st.selectbox("Asignar Cargo", CARGOS)
                         if st.form_submit_button("Actualizar Perfil"):
-                            # Auto-ajustamos los permisos ocultos por si el rol lo amerita
                             n_teso = 1 if n_cargo == 'Tesorero' else 0
                             n_sec = 1 if n_cargo == 'Secretario' else 0
                             
