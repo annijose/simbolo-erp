@@ -3,4 +3,4 @@ pandas
 fpdf
 beautifulsoup4
 requests
-libsql-experimental
+libsql-client
