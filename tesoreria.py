@@ -108,7 +108,6 @@ def obtener_tasa_bcv():
         response = requests.get(url, verify=False, timeout=5)
         soup = BeautifulSoup(response.text, 'html.parser')
         tasa_str = soup.find(id="dolar").find("strong").text.strip()
-        # EXTRAE LA TASA Y LA REDONDEA EXACTAMENTE A 2 DECIMALES
         return round(float(tasa_str.replace(',', '.')), 2)
     except: return 45.00
 
@@ -235,7 +234,7 @@ else:
                 f_si = st.date_input("Fecha Inicio", datetime.now())
                 n_bs = st.number_input("Banco (Bs)", min_value=0.0)
                 n_usd = st.number_input("Caja (USD)", min_value=0.0)
-                t_si = st.number_input("Tasa SI", value=st.session_state.tasa_actual)
+                t_si = st.number_input("Tasa SI", value=st.session_state.tasa_actual, format="%.4f")
                 if st.button("💾 Guardar Saldos Iniciales"):
                     client = get_client()
                     try:
@@ -263,7 +262,7 @@ else:
                 f_si_h = st.date_input("Fecha Inicio Hosp.", datetime.now())
                 n_usd_h = st.number_input("Caja Hosp. (USD)", min_value=0.0, step=1.0)
                 n_bs_h = st.number_input("Caja Hosp. (Bs)", min_value=0.0, step=10.0)
-                t_si_h = st.number_input("Tasa SI Hosp.", value=st.session_state.tasa_actual)
+                t_si_h = st.number_input("Tasa SI Hosp.", value=st.session_state.tasa_actual, format="%.4f")
                 if st.button("💾 Guardar Saldo Inicial Hosp."):
                     client = get_client()
                     try:
@@ -280,7 +279,6 @@ else:
             col_h1, col_h2 = st.columns(2)
             col_h1.metric("Fondo (USD)", f"{tot_usd_h:,.2f} $")
             col_h2.metric("Fondo (Bs)", f"{tot_bs_h:,.2f} Bs.")
-
 
     # --- PESTAÑAS BLINDADAS ---
     m_tabs = []
@@ -311,15 +309,24 @@ else:
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
             es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", help="Usa esto para registrar meses pagados antes del sistema sin alterar la caja.")
             
-            ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}")
+            ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
             
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
                 cat_t = c_i1.selectbox("Concepto", CAT_INGRESO)
                 
+                # --- LOGICA DE PRONTO PAGO APLICADA AQUI ---
                 if cat_t == "Capitación Mensual":
                     m_list = c_i1.multiselect("Meses", MESES_ANNO)
-                    d_t = ", ".join(m_list); m_t = (len(m_list)*15.0)
+                    
+                    if len(m_list) == 12 and met_in == "Efectivo USD":
+                        d_t = "AÑO COMPLETO (PRONTO PAGO EN EFECTIVO)"
+                        m_t = 150.0  # Rebaja aplicada: Paga $150 en lugar de $180
+                        st.success("🎉 ¡Se ha aplicado el beneficio de PRONTO PAGO ($150 por 12 meses)!")
+                    else:
+                        d_t = ", ".join(m_list)
+                        m_t = (len(m_list) * 15.0) # Tarifa regular: $15 por mes
+                        
                 elif qh_in == "CABALLERO PROFANO" and cat_t == "Derechos de Iniciación":
                     d_t = c_i1.text_input("Nombre completo del Profano", placeholder="Ej: Juan Pérez")
                     m_t = c_i1.number_input("Monto USD", value=50.0)
@@ -378,7 +385,7 @@ else:
             cat_e = c_e1.selectbox("Concepto", CAT_EGRESO, key=f"ec_{st.session_state.eg_key}")
             met_e = c_e1.radio("Origen:", ["Banco (Bs)", "Caja Chica (USD)"], horizontal=True, key=f"em_{st.session_state.eg_key}")
             
-            t_e = c_e2.number_input("Tasa", value=st.session_state.tasa_actual, key=f"et_{st.session_state.eg_key}")
+            t_e = c_e2.number_input("Tasa", value=st.session_state.tasa_actual, key=f"et_{st.session_state.eg_key}", format="%.4f")
             
             if met_e == "Caja Chica (USD)":
                 m_u_e = c_e2.number_input("USD", key=f"egu_{st.session_state.eg_key}"); m_b_e = round(m_u_e * t_e, 2); r_e = "EFECTIVO"
@@ -532,174 +539,6 @@ else:
                         m_usd_h_i = st.number_input("Recolectado en USD ($)", min_value=0.0, step=1.0, key="usd_i")
                         m_bs_h_i = st.number_input("Recolectado en Bs.", min_value=0.0, step=10.0, key="bs_i")
                         
-                        t_bcv_h_i = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_i")
+                        t_bcv_h_i = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_i", format="%.4f")
                         
-                        if st.form_submit_button("💾 Guardar Ingreso"):
-                            client = get_client()
-                            try:
-                                client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_i), f"INGRESO: {det_h_i}", m_usd_h_i, t_bcv_h_i, m_bs_h_i))
-                            finally:
-                                client.close()
-                            st.success("Óbolo registrado exitosamente.")
-                            st.rerun()
-
-            with col_egr_h:
-                with st.expander("📤 Registrar Egreso (Ayuda)", expanded=True):
-                    with st.form("f_hosp_egr", clear_on_submit=True):
-                        f_h_e = st.date_input("Fecha", datetime.now(), key="f_h_e")
-                        det_h_e = st.text_input("Beneficiario / Motivo", placeholder="Ej. Ayuda Q.H. Perez", key="det_h_e")
-                        m_usd_h_e = st.number_input("Monto a entregar USD ($)", min_value=0.0, step=1.0, key="usd_e")
-                        m_bs_h_e = st.number_input("Monto a entregar Bs.", min_value=0.0, step=10.0, key="bs_e")
-                        
-                        t_bcv_h_e = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_e")
-                        
-                        if st.form_submit_button("💾 Guardar Egreso"):
-                            client = get_client()
-                            try:
-                                client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_e), f"EGRESO: {det_h_e}", -abs(m_usd_h_e), t_bcv_h_e, -abs(m_bs_h_e)))
-                            finally:
-                                client.close()
-                            st.success("Egreso registrado exitosamente.")
-                            st.rerun()
-            
-            st.divider()
-            st.subheader("📖 Historial del Saco de Beneficencia")
-            df_hosp = leer_datos("hospitalario")
-            if not df_hosp.empty:
-                st.dataframe(df_hosp[['fecha', 'detalle', 'monto_usd', 'monto_bs', 'tasa_bcv']], use_container_width=True)
-                
-                st.divider()
-                csv_hosp = df_hosp.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(
-                    label="📥 Exportar Historial a Excel",
-                    data=csv_hosp,
-                    file_name=f"Hospitalario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.info("Aún no hay movimientos registrados en el Saco de Beneficencia.")
-
-    # ==========================================
-    # MÓDULO ADMINISTRADOR
-    # ==========================================
-    if TAB_USU in m_tabs:
-        with tabs[m_tabs.index(TAB_USU)]:
-            st.subheader("👥 Gestión de Usuarios")
-            df_u = leer_datos("usuarios")
-            st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol', 'perm_tesoreria', 'perm_secretaria']], use_container_width=True)
-            
-            c_u1, c_u2, c_u3 = st.columns(3)
-            with c_u1:
-                with st.expander("➕ Crear Nuevo", expanded=False):
-                    with st.form("crear_u", clear_on_submit=True):
-                        nu = st.text_input("Usuario (Sin espacios)")
-                        np = st.text_input("Clave", type="password")
-                        nn = st.text_input("Nombre Completo Q.·.H.·.")
-                        ng = st.selectbox("Grado", GRADOS)
-                        ncargo = st.selectbox("Cargo", CARGOS)
-                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
-                        pt = st.checkbox("Tesorero"); ps = st.checkbox("Secretario")
-                        if st.form_submit_button("Guardar"):
-                            nu_limpio = quitar_acentos(nu.strip().lower())
-                            client = get_client()
-                            try:
-                                client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (nu_limpio, np, nn.strip(), ng, nr, int(pt), int(ps), ncargo))
-                            finally:
-                                client.close()
-                            st.rerun()
-            with c_u2:
-                with st.expander("✏️ Modificar Grado/Cargo", expanded=True):
-                    with st.form("edit_u"):
-                        u_mod = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
-                        n_grado = st.selectbox("Actualizar Grado", GRADOS)
-                        n_cargo = st.selectbox("Asignar Cargo", CARGOS)
-                        if st.form_submit_button("Actualizar Perfil"):
-                            n_teso = 1 if n_cargo == 'Tesorero' else 0
-                            n_sec = 1 if n_cargo == 'Secretario' else 0
-                            
-                            client = get_client()
-                            try:
-                                client.execute("UPDATE usuarios SET grado=?, cargo_logia=?, perm_tesoreria=?, perm_secretaria=? WHERE nombre_qh=?", (n_grado, n_cargo, n_teso, n_sec, u_mod))
-                            finally:
-                                client.close()
-                            st.success("Perfil actualizado. (Nota: El Q.·.H.·. debe iniciar sesión nuevamente para ver sus nuevos accesos).")
-                            st.rerun()
-            with c_u3:
-                with st.expander("🔐 Cambiar Clave", expanded=False):
-                    with st.form("mod_p"):
-                        u_s = st.selectbox("Usuario", df_u['username'].tolist())
-                        n_p = st.text_input("Nueva Clave", type="password")
-                        if st.form_submit_button("Actualizar"):
-                            client = get_client()
-                            try:
-                                client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
-                            finally:
-                                client.close()
-                            st.success("Clave actualizada")
-
-    if TAB_CON in m_tabs:
-        with tabs[m_tabs.index(TAB_CON)]:
-            st.subheader("⚙️ Configuración")
-            
-            st.write("**🛠️ Mantenimiento del Sistema**")
-            if st.button("🧹 Normalizar Nombres de Usuario (Quitar acentos)"):
-                client = get_client()
-                try:
-                    res_usrs = client.execute("SELECT username FROM usuarios")
-                    for row in res_usrs.rows:
-                        old_u = row[0]
-                        new_u = quitar_acentos(old_u)
-                        if old_u != new_u:
-                            client.execute("UPDATE usuarios SET username=? WHERE username=?", [new_u, old_u])
-                    st.success("¡Usuarios normalizados con éxito! Los acentos han sido eliminados de la base de datos.")
-                except Exception as e:
-                    st.error(f"Error al normalizar: {e}")
-                finally:
-                    client.close()
-            
-            st.divider()
-            
-            st.error("⚠️ Borrado Definitivo")
-            if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
-                if st.button("🚨 VACIAR BASE DE DATOS", type="primary"):
-                    client = get_client()
-                    try:
-                        client.execute("DELETE FROM movimientos"); client.execute("DELETE FROM actas"); client.execute("DELETE FROM asistencia"); client.execute("DELETE FROM hospitalario")
-                    finally:
-                        client.close()
-                    logout()
-
-    # ==========================================
-    # PORTAL DEL HERMANO (USUARIO NORMAL)
-    # ==========================================
-    if TAB_POR in m_tabs:
-        with tabs[m_tabs.index(TAB_POR)]:
-            st.subheader(f"Bienvenido al Taller, {tratamiento_masonico} {info['nombre']}")
-            
-            texto_grado_cargo = f"Cámara de {info['grado']}"
-            if info['cargo'] != "Ninguno": texto_grado_cargo += f" | {info['cargo']} de la Logia"
-            st.write(texto_grado_cargo)
-            
-            df_all = leer_datos()
-            mis_pagos = df_all[(df_all['origen_destino'] == info['nombre']) & (df_all['categoria'] == 'Capitación Mensual')]
-            meses_pagados_str = " ".join(mis_pagos['detalle'].tolist())
-            mes_actual_idx = datetime.now().month
-            meses_deberian_estar_pagos = MESES_ANNO[:mes_actual_idx]
-            meses_pendientes = [m for m in meses_deberian_estar_pagos if m not in meses_pagados_str]
-            st.divider()
-            if not meses_pendientes: st.success(f"✨ **¡ESTÁS A PLOMO!**")
-            else: st.error(f"⚠️ **AVISO:** Meses pendientes: {', '.join(meses_pendientes)}")
-
-    if TAB_MRE in m_tabs:
-        with tabs[m_tabs.index(TAB_MRE)]:
-            st.subheader("📄 Mis Recibos")
-            df_all2 = leer_datos()
-            mis_mov = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df_all2['tipo_operacion'] == 'INGRESO')]
-            if not mis_mov.empty:
-                mis_mov['m_id'] = mis_mov['id'].apply(lambda x: x.split('-')[0])
-                m_id = st.selectbox("Recibo ID", mis_mov['m_id'].unique())
-                items_r = mis_mov[mis_mov['m_id'] == m_id]
-                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in items_r.iterrows()]
-                pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
-                st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_SIMBOLO_{m_id}.pdf", mime="application/pdf")
-            else: st.info("No hay pagos registrados.")
+                        if st.form
