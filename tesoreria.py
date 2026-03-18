@@ -280,7 +280,6 @@ else:
             col_h1.metric("Fondo (USD)", f"{tot_usd_h:,.2f} $")
             col_h2.metric("Fondo (Bs)", f"{tot_bs_h:,.2f} Bs.")
 
-
     # --- PESTAÑAS BLINDADAS ---
     m_tabs = []
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
@@ -301,23 +300,25 @@ else:
             if 'carrito' not in st.session_state: st.session_state.carrito = []
             if 'u_recibo' not in st.session_state: st.session_state.u_recibo = None
             if 'f_key' not in st.session_state: st.session_state.f_key = 0
+            
             st.subheader("📝 Punto de Venta")
             c_g1, c_g2, c_g3, c_g4 = st.columns([2, 1.5, 1.5, 1])
             
+            # --- TODAS LAS LLAVES DINÁMICAS AÑADIDAS AQUÍ ---
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
-            es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", help="Usa esto para registrar meses pagados antes del sistema sin alterar la caja.")
+            es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", help="Usa esto para registrar meses pagados antes del sistema sin alterar la caja.", key=f"hist_{st.session_state.f_key}")
             
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
             
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
-                cat_t = c_i1.selectbox("Concepto", CAT_INGRESO)
+                cat_t = c_i1.selectbox("Concepto", CAT_INGRESO, key=f"cat_{st.session_state.f_key}")
                 
                 if cat_t == "Capitación Mensual":
-                    m_list = c_i1.multiselect("Meses", MESES_ANNO)
+                    m_list = c_i1.multiselect("Meses", MESES_ANNO, key=f"meses_{st.session_state.f_key}")
                     
                     if len(m_list) == 12 and met_in == "Efectivo USD":
                         d_t = "AÑO COMPLETO (PRONTO PAGO EN EFECTIVO)"
@@ -328,16 +329,16 @@ else:
                         m_t = (len(m_list) * 15.0)
                         
                 elif qh_in == "CABALLERO PROFANO" and cat_t == "Derechos de Iniciación":
-                    d_t = c_i1.text_input("Nombre completo del Profano", placeholder="Ej: Juan Pérez")
-                    m_t = c_i1.number_input("Monto USD", value=50.0)
+                    d_t = c_i1.text_input("Nombre completo del Profano", placeholder="Ej: Juan Pérez", key=f"prof_{st.session_state.f_key}")
+                    m_t = c_i1.number_input("Monto USD", value=50.0, key=f"m_prof_{st.session_state.f_key}")
                 elif cat_t in ["Derechos de Pasaje", "Derechos de Exaltación"]:
-                    grado_dest = c_i1.selectbox("Grado a recibir", ["Compañero", "Maestro Mason"])
+                    grado_dest = c_i1.selectbox("Grado a recibir", ["Compañero", "Maestro Mason"], key=f"gr_dest_{st.session_state.f_key}")
                     d_t = f"Aumento/Exaltación a {grado_dest}"
-                    m_t = c_i1.number_input("Monto USD", value=30.0)
+                    m_t = c_i1.number_input("Monto USD", value=30.0, key=f"m_pas_{st.session_state.f_key}")
                 else:
-                    d_t = c_i1.text_input("Descripción"); m_t = c_i1.number_input("Monto USD", value=15.0)
+                    d_t = c_i1.text_input("Descripción", key=f"desc_ot_{st.session_state.f_key}"); m_t = c_i1.number_input("Monto USD", value=15.0, key=f"m_ot_{st.session_state.f_key}")
                 
-                ref_t_input = c_i2.text_input("Ref. Pago")
+                ref_t_input = c_i2.text_input("Ref. Pago", key=f"ref_{st.session_state.f_key}")
                 
                 if es_historico:
                     m_t_final = 0.0
@@ -357,6 +358,7 @@ else:
                     cols = st.columns([4,1,1,0.5])
                     cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
                     if cols[3].button("🗑️", key=f"del_{it['id_t']}"): st.session_state.carrito.pop(i); st.rerun()
+                
                 if st.button("🚀 Procesar e Imprimir", type="primary", use_container_width=True):
                     id_m = datetime.now().strftime('%y%m%d%H%M%S')
                     client = get_client()
@@ -369,11 +371,17 @@ else:
                     grado_actual = dict_grados.get(qh_in, "")
                     pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': st.session_state.carrito[0]['ref']}, st.session_state.carrito, grado_actual)
                     st.session_state.u_recibo = {"bytes": pdf_bytes, "n": f"Recibo_SIMBOLO_{id_m}.pdf"}
-                    st.session_state.carrito = []; st.rerun()
+                    st.session_state.carrito = []
+                    
+                    # --- AQUÍ SE LIMPIA LA PANTALLA MÁGICAMENTE ---
+                    st.session_state.f_key += 1 
+                    st.rerun()
             
             if st.session_state.u_recibo:
                 st.download_button("📥 Descargar PDF", st.session_state.u_recibo['bytes'], st.session_state.u_recibo['n'], mime="application/pdf", use_container_width=True)
-                if st.button("🔄 Nuevo Cobro"): st.session_state.u_recibo = None; st.session_state.f_key += 1; st.rerun()
+                if st.button("🔄 Nuevo Cobro"): 
+                    st.session_state.u_recibo = None
+                    st.rerun()
 
     if TAB_EGR in m_tabs:
         with tabs[m_tabs.index(TAB_EGR)]:
@@ -392,6 +400,7 @@ else:
             else:
                 m_b_e = c_e2.number_input("Bs", key=f"ebs_{st.session_state.eg_key}"); m_u_e = round(m_b_e / t_e, 2); r_e = c_e2.text_input("Referencia", key=f"er_{st.session_state.eg_key}")
             nota_e = c_e2.text_input("Nota", key=f"en_{st.session_state.eg_key}")
+            
             if st.button("Registrar Salida", type="primary"):
                 id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"
                 client = get_client()
@@ -616,7 +625,8 @@ else:
                             st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar Grado/Cargo", expanded=True):
-                    with st.form("edit_u"):
+                    # --- AÑADIDO: clear_on_submit=True PARA LIMPIAR AL ACTUALIZAR ---
+                    with st.form("edit_u", clear_on_submit=True):
                         u_mod = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
                         n_grado = st.selectbox("Actualizar Grado", GRADOS)
                         n_cargo = st.selectbox("Asignar Cargo", CARGOS)
@@ -633,7 +643,8 @@ else:
                             st.rerun()
             with c_u3:
                 with st.expander("🔐 Cambiar Clave", expanded=False):
-                    with st.form("mod_p"):
+                    # --- AÑADIDO: clear_on_submit=True PARA LIMPIAR AL ACTUALIZAR ---
+                    with st.form("mod_p", clear_on_submit=True):
                         u_s = st.selectbox("Usuario", df_u['username'].tolist())
                         n_p = st.text_input("Nueva Clave", type="password")
                         if st.form_submit_button("Actualizar"):
