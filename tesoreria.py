@@ -58,7 +58,12 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
                      (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
-        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')")
+        # Corrección del Administrador genérico y creación de Annijosé
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno')")
+        client.execute("UPDATE usuarios SET nombre_qh='ADMINISTRADOR GENERAL' WHERE username='admin'")
+        
+        usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'Annijosé Goitia', 'Maestro Mason', 'Administrador', 1, 0, 'Tesorero')", (usr_anni,))
         
         res = client.execute("SELECT count(*) FROM usuarios")
         if res.rows[0][0] < 20:
@@ -304,7 +309,6 @@ else:
             st.subheader("📝 Punto de Venta")
             c_g1, c_g2, c_g3, c_g4 = st.columns([2, 1.5, 1.5, 1])
             
-            # --- TODAS LAS LLAVES DINÁMICAS AÑADIDAS AQUÍ ---
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             
@@ -372,8 +376,6 @@ else:
                     pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': st.session_state.carrito[0]['ref']}, st.session_state.carrito, grado_actual)
                     st.session_state.u_recibo = {"bytes": pdf_bytes, "n": f"Recibo_SIMBOLO_{id_m}.pdf"}
                     st.session_state.carrito = []
-                    
-                    # --- AQUÍ SE LIMPIA LA PANTALLA MÁGICAMENTE ---
                     st.session_state.f_key += 1 
                     st.rerun()
             
@@ -446,6 +448,66 @@ else:
             if not df_r.empty:
                 st.bar_chart(df_r.groupby('tipo_operacion')['monto_usd'].apply(lambda x: abs(x.sum())))
 
+            st.divider()
+            # --- NUEVO: REPORTE DE CUMPLIMIENTO DE ASISTENCIA ---
+            st.subheader("📈 Relación de Asistencia Logial")
+            st.info("Regla: Aprendices (2 tenidas ord. /mes), Compañeros (3 ord. /mes), Maestros (4 ord. /mes). Todos asisten a Extraordinarias e Instalación.")
+            
+            df_a = leer_datos("actas")
+            df_as = leer_datos("asistencia")
+            df_u = leer_datos("usuarios")
+            
+            if not df_a.empty and not df_as.empty:
+                df_a['fecha'] = pd.to_datetime(df_a['fecha'], errors='coerce')
+                df_a['mes_anio'] = df_a['fecha'].dt.strftime('%Y-%m')
+                
+                # Calcular requerimientos por cada mes de trabajo
+                req_mensual = []
+                for mes, group in df_a.groupby('mes_anio'):
+                    ord_count = len(group[group['tipo_tenida'] == 'Ordinaria'])
+                    ext_count = len(group[group['tipo_tenida'].isin(['Extraordinaria', 'Instalación'])])
+                    
+                    req_mensual.append({
+                        'mes': mes,
+                        'req_ap': min(2, ord_count) + ext_count,
+                        'req_co': min(3, ord_count) + ext_count,
+                        'req_mm': ord_count + ext_count
+                    })
+                
+                df_req = pd.DataFrame(req_mensual)
+                total_req_ap = df_req['req_ap'].sum() if not df_req.empty else 0
+                total_req_co = df_req['req_co'].sum() if not df_req.empty else 0
+                total_req_mm = df_req['req_mm'].sum() if not df_req.empty else 0
+                
+                res_asis = []
+                # Filtramos los usuarios genéricos para el reporte
+                for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
+                    qh = u_row['nombre_qh']
+                    grado = u_row['grado']
+                    
+                    if grado == 'Aprendiz': req_total = total_req_ap
+                    elif grado == 'Compañero': req_total = total_req_co
+                    else: req_total = total_req_mm
+                    
+                    asis_qh = df_as[(df_as['nombre_qh'] == qh) & (df_as['asistio'] == 1)]
+                    total_asis = len(asis_qh)
+                    
+                    cumplimiento = (total_asis / req_total * 100) if req_total > 0 else 100.0
+                    
+                    res_asis.append({
+                        'QQ.·.HH.·.': qh,
+                        'Grado': grado,
+                        'Asist. Reales': total_asis,
+                        'Asist. Requeridas': req_total,
+                        '% Cumplimiento': min(100.0, cumplimiento) # Limitado a 100%
+                    })
+                    
+                if res_asis:
+                    df_res_asis = pd.DataFrame(res_asis)
+                    st.dataframe(df_res_asis.style.format({'% Cumplimiento': '{:.1f}%'}), use_container_width=True)
+            else:
+                st.info("No hay suficientes datos de actas y asistencia para generar el reporte de cumplimiento.")
+
     # ==========================================
     # MÓDULO SECRETARÍA (UNIFICADO)
     # ==========================================
@@ -461,7 +523,7 @@ else:
                     t_a = c1.selectbox("Tipo", ["Ordinaria", "Extraordinaria", "Instalación", "Fúnebre"])
                     g_a = c2.selectbox("Grado Tenida", GRADOS)
                     
-                    lista_hermanos_filtro = [qh for qh in lista_qh if qh != "CABALLERO PROFANO"]
+                    lista_hermanos_filtro = [qh for qh in lista_qh if qh != "CABALLERO PROFANO" and qh != "ADMINISTRADOR GENERAL"]
                     presentes = st.multiselect("QQ.·.HH.·. Presentes", lista_hermanos_filtro)
                     bosq = st.text_area("Bosquejo / Orden del Día")
                     
@@ -495,42 +557,6 @@ else:
                 pdf_acta = generar_pdf_acta(acta_row.to_dict(), lista_presentes)
                 st.download_button(f"📥 Descargar PDF Acta {id_sel}", pdf_acta, f"{id_sel}.pdf", mime="application/pdf")
                 
-            st.divider()
-            st.subheader("📈 Reporte de Asistencia y Derecho a Voto")
-            
-            client = get_client()
-            try:
-                res_total = client.execute("SELECT count(*) as total FROM actas")
-                total_actas_db = res_total.rows[0][0] if res_total.rows else 0
-                
-                if total_actas_db > 0:
-                    query_reporte = """
-                    SELECT u.nombre_qh as 'Q.·.H.·.', u.grado as 'Grado', 
-                           COUNT(a.id_registro) as 'Tenidas Asistidas'
-                    FROM usuarios u
-                    LEFT JOIN asistencia a ON u.nombre_qh = a.nombre_qh
-                    WHERE u.nombre_qh != 'CABALLERO PROFANO'
-                    GROUP BY u.nombre_qh, u.grado
-                    """
-                    res_reporte = client.execute(query_reporte)
-                    df_reporte = pd.DataFrame([list(r) for r in res_reporte.rows], columns=res_reporte.columns)
-                    
-                    df_reporte['Tenidas Realizadas'] = total_actas_db
-                    df_reporte['% Asistencia'] = round((df_reporte['Tenidas Asistidas'] / total_actas_db) * 100, 1)
-                    
-                    def calcular_voto(row):
-                        if row['Grado'] in ['Maestro Mason', 'Past Master']:
-                            return "✅ Sí" if row['% Asistencia'] >= 50.0 else "❌ No (Falta asis.)"
-                        return "❌ No (Por Grado)"
-                    
-                    df_reporte['Derecho a Voto (Elecciones)'] = df_reporte.apply(calcular_voto, axis=1)
-                    
-                    st.dataframe(df_reporte.style.format({'% Asistencia': '{:.1f}%'}), use_container_width=True)
-                else:
-                    st.info("Aún no se han registrado actas para calcular la asistencia.")
-            finally:
-                client.close()
-
     # ==========================================
     # MÓDULO HOSPITALARIO (SACO DE BENEFICENCIA)
     # ==========================================
@@ -625,7 +651,6 @@ else:
                             st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar Grado/Cargo", expanded=True):
-                    # --- AÑADIDO: clear_on_submit=True PARA LIMPIAR AL ACTUALIZAR ---
                     with st.form("edit_u", clear_on_submit=True):
                         u_mod = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
                         n_grado = st.selectbox("Actualizar Grado", GRADOS)
@@ -643,7 +668,6 @@ else:
                             st.rerun()
             with c_u3:
                 with st.expander("🔐 Cambiar Clave", expanded=False):
-                    # --- AÑADIDO: clear_on_submit=True PARA LIMPIAR AL ACTUALIZAR ---
                     with st.form("mod_p", clear_on_submit=True):
                         u_s = st.selectbox("Usuario", df_u['username'].tolist())
                         n_p = st.text_input("Nueva Clave", type="password")
