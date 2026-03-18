@@ -216,9 +216,12 @@ else:
     lista_qh, dict_grados = obtener_miembros()
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
     
+    # Determinar tratamiento correcto según el grado
+    tratamiento_masonico = "V.·.H.·." if info['grado'] in ['Maestro Mason', 'Past Master'] else "Q.·.H.·."
+    
     with st.sidebar:
         st.title("🏛️ S.I.M.B.O.L.O.")
-        st.write(f"V.·.H.·. **{info['nombre']}**")
+        st.write(f"{tratamiento_masonico} **{info['nombre']}**")
         if st.button("🚪 Cerrar Sesión", type="primary"): logout()
         
         if info['teso']:
@@ -249,7 +252,6 @@ else:
             st.metric("🏦 Banco Actual", f"{b_bs:,.2f} Bs.")
             st.metric("💵 Caja Actual", f"{c_usd:,.2f} $")
 
-        # --- NUEVO: RESUMEN HOSPITALARIO EN SIDEBAR ---
         if is_hosp:
             st.divider()
             st.header("❤️ Resumen Hospitalario")
@@ -549,7 +551,6 @@ else:
                         if st.form_submit_button("💾 Guardar Egreso"):
                             client = get_client()
                             try:
-                                # Los egresos se guardan en negativo para que la suma del fondo sea correcta
                                 client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_e), f"EGRESO: {det_h_e}", -abs(m_usd_h_e), t_bcv_h_e, -abs(m_bs_h_e)))
                             finally:
                                 client.close()
@@ -616,7 +617,7 @@ else:
                                 client.execute("UPDATE usuarios SET grado=?, cargo_logia=?, perm_tesoreria=?, perm_secretaria=? WHERE nombre_qh=?", (n_grado, n_cargo, n_teso, n_sec, u_mod))
                             finally:
                                 client.close()
-                            st.success("Perfil actualizado. (Nota: El Q.·.H.·. debe iniciar sesión nuevamente para ver sus nuevos accesos).")
+                            st.success("Perfil actualizado. (Nota: El Hermano debe iniciar sesión nuevamente para ver sus nuevos accesos).")
                             st.rerun()
             with c_u3:
                 with st.expander("🔐 Cambiar Clave", expanded=False):
@@ -668,7 +669,7 @@ else:
     # ==========================================
     if TAB_POR in m_tabs:
         with tabs[m_tabs.index(TAB_POR)]:
-            st.subheader(f"Bienvenido al Taller, V.·.H.·. {info['nombre']}")
+            st.subheader(f"Bienvenido al Taller, {tratamiento_masonico} {info['nombre']}")
             
             texto_grado_cargo = f"Cámara de {info['grado']}"
             if info['cargo'] != "Ninguno": texto_grado_cargo += f" | {info['cargo']} de la Logia"
