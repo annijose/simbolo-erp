@@ -216,7 +216,6 @@ else:
     lista_qh, dict_grados = obtener_miembros()
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
     
-    # Determinar tratamiento correcto según el grado
     tratamiento_masonico = "V.·.H.·." if info['grado'] in ['Maestro Mason', 'Past Master'] else "Q.·.H.·."
     
     with st.sidebar:
@@ -235,7 +234,8 @@ else:
                 f_si = st.date_input("Fecha Inicio", datetime.now())
                 n_bs = st.number_input("Banco (Bs)", min_value=0.0)
                 n_usd = st.number_input("Caja (USD)", min_value=0.0)
-                t_si = st.number_input("Tasa SI", value=st.session_state.tasa_actual)
+                # Formato de 4 decimales aplicado aquí
+                t_si = st.number_input("Tasa SI", value=st.session_state.tasa_actual, format="%.4f")
                 if st.button("💾 Guardar Saldos Iniciales"):
                     client = get_client()
                     try:
@@ -263,7 +263,8 @@ else:
                 f_si_h = st.date_input("Fecha Inicio Hosp.", datetime.now())
                 n_usd_h = st.number_input("Caja Hosp. (USD)", min_value=0.0, step=1.0)
                 n_bs_h = st.number_input("Caja Hosp. (Bs)", min_value=0.0, step=10.0)
-                t_si_h = st.number_input("Tasa SI Hosp.", value=st.session_state.tasa_actual)
+                # Formato de 4 decimales aplicado aquí
+                t_si_h = st.number_input("Tasa SI Hosp.", value=st.session_state.tasa_actual, format="%.4f")
                 if st.button("💾 Guardar Saldo Inicial Hosp."):
                     client = get_client()
                     try:
@@ -310,7 +311,9 @@ else:
             
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
             es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", help="Usa esto para registrar meses pagados antes del sistema sin alterar la caja.")
-            ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}")
+            
+            # Formato de 4 decimales aplicado aquí
+            ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
             
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
@@ -376,7 +379,10 @@ else:
             ben_e = c_e1.text_input("Beneficiario", key=f"eb_{st.session_state.eg_key}")
             cat_e = c_e1.selectbox("Concepto", CAT_EGRESO, key=f"ec_{st.session_state.eg_key}")
             met_e = c_e1.radio("Origen:", ["Banco (Bs)", "Caja Chica (USD)"], horizontal=True, key=f"em_{st.session_state.eg_key}")
-            t_e = c_e2.number_input("Tasa", value=st.session_state.tasa_actual, key=f"et_{st.session_state.eg_key}")
+            
+            # Formato de 4 decimales aplicado aquí
+            t_e = c_e2.number_input("Tasa", value=st.session_state.tasa_actual, key=f"et_{st.session_state.eg_key}", format="%.4f")
+            
             if met_e == "Caja Chica (USD)":
                 m_u_e = c_e2.number_input("USD", key=f"egu_{st.session_state.eg_key}"); m_b_e = round(m_u_e * t_e, 2); r_e = "EFECTIVO"
             else:
@@ -528,7 +534,9 @@ else:
                         det_h_i = st.text_input("Detalle / N° de Tenida", placeholder="Ej. Tenida Ordinaria", key="det_h_i")
                         m_usd_h_i = st.number_input("Recolectado en USD ($)", min_value=0.0, step=1.0, key="usd_i")
                         m_bs_h_i = st.number_input("Recolectado en Bs.", min_value=0.0, step=10.0, key="bs_i")
-                        t_bcv_h_i = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_i")
+                        
+                        # Formato de 4 decimales aplicado aquí
+                        t_bcv_h_i = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_i", format="%.4f")
                         
                         if st.form_submit_button("💾 Guardar Ingreso"):
                             client = get_client()
@@ -546,7 +554,9 @@ else:
                         det_h_e = st.text_input("Beneficiario / Motivo", placeholder="Ej. Ayuda Q.H. Perez", key="det_h_e")
                         m_usd_h_e = st.number_input("Monto a entregar USD ($)", min_value=0.0, step=1.0, key="usd_e")
                         m_bs_h_e = st.number_input("Monto a entregar Bs.", min_value=0.0, step=10.0, key="bs_e")
-                        t_bcv_h_e = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_e")
+                        
+                        # Formato de 4 decimales aplicado aquí
+                        t_bcv_h_e = st.number_input("Tasa BCV del día", value=st.session_state.tasa_actual, key="tasa_e", format="%.4f")
                         
                         if st.form_submit_button("💾 Guardar Egreso"):
                             client = get_client()
@@ -617,7 +627,7 @@ else:
                                 client.execute("UPDATE usuarios SET grado=?, cargo_logia=?, perm_tesoreria=?, perm_secretaria=? WHERE nombre_qh=?", (n_grado, n_cargo, n_teso, n_sec, u_mod))
                             finally:
                                 client.close()
-                            st.success("Perfil actualizado. (Nota: El Hermano debe iniciar sesión nuevamente para ver sus nuevos accesos).")
+                            st.success("Perfil actualizado. (Nota: El Q.·.H.·. debe iniciar sesión nuevamente para ver sus nuevos accesos).")
                             st.rerun()
             with c_u3:
                 with st.expander("🔐 Cambiar Clave", expanded=False):
