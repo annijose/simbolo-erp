@@ -61,7 +61,7 @@ def init_db():
         # Corrección del Administrador genérico y creación de Annijosé
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno')")
         client.execute("UPDATE usuarios SET nombre_qh='ADMINISTRADOR GENERAL' WHERE username='admin'")
-        
+        client.execute("UPDATE usuarios SET password='113' WHERE username='annijosegoitia'")
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'Annijosé Goitia', 'Maestro Mason', 'Administrador', 1, 0, 'Tesorero')", (usr_anni,))
         
