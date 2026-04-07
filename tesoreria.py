@@ -334,31 +334,23 @@ else:
                 csv_diario = df_diario.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button("📥 Exportar Libro Diario a Excel", data=csv_diario, file_name=f"Libro_Diario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
 
-    # --- MÓDULO RECIBOS (ACTUALIZADO CON NOMBRE Y FECHA) ---
+    # --- MÓDULO RECIBOS ---
     if TAB_REC in m_tabs:
         with tabs[m_tabs.index(TAB_REC)]:
             st.subheader("🖨️ Reimpresión de Recibos")
             df_rec_raw = leer_datos(); df_rec_raw = df_rec_raw[df_rec_raw['tipo_operacion'] == 'INGRESO']
-            
             if not df_rec_raw.empty:
-                # Agrupamos para obtener una lista única de recibos con info legible
                 df_rec_raw['m_id'] = df_rec_raw['id'].apply(lambda x: x.split('-')[0])
-                
-                # Creamos un diccionario para el selectbox: "Label legible": "ID_real"
                 opciones_recibos = {}
                 for _, r in df_rec_raw.sort_values(by='fecha', ascending=False).iterrows():
                     label = f"QH: {r['origen_destino']} | Fecha: {r['fecha']} | ID: {r['m_id']}"
                     opciones_recibos[label] = r['m_id']
-                
                 seleccion_label = st.selectbox("Seleccione el recibo para reimprimir", list(opciones_recibos.keys()))
                 id_s = opciones_recibos[seleccion_label]
-                
-                # Procesamos la reimpresión
                 i_r = df_rec_raw[df_rec_raw['m_id'] == id_s]
                 l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in i_r.iterrows()]
                 qh_n = i_r['origen_destino'].iloc[0]
                 p_r = generar_recibo_multiple({'id': id_s, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
-                
                 st.download_button(f"📄 Descargar PDF de {qh_n} ({id_s})", p_r, f"Recibo_{qh_n}_{id_s}.pdf", mime="application/pdf")
             else:
                 st.info("No hay recibos registrados para mostrar.")
@@ -476,7 +468,7 @@ else:
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
                             finally: client.close()
-                            st.success("Perfil actualizado."); st.rerun()
+                            st.rerun()
             with c_u3:
                 with st.expander("🔐 Clave"):
                     with st.form("mod_p", clear_on_submit=True):
@@ -485,7 +477,7 @@ else:
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
                             finally: client.close()
-                            st.success("Clave actualizada.")
+                            st.rerun()
 
     # --- MÓDULO CONFIGURACIÓN ---
     if TAB_CON in m_tabs:
@@ -525,12 +517,27 @@ else:
 
     if TAB_MRE in m_tabs:
         with tabs[m_tabs.index(TAB_MRE)]:
-            st.subheader("📄 Mis Recibos"); df_all2 = leer_datos()
-            mis_mov = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df_all2['tipo_operacion'] == 'INGRESO')]
-            if not mis_mov.empty:
-                mis_mov['m_id'] = mis_mov['id'].apply(lambda x: x.split('-')[0])
-                m_id = st.selectbox("Seleccione Recibo", mis_mov['m_id'].unique())
-                i_r = mis_mov[mis_mov['m_id'] == m_id]
-                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in i_r.iterrows()]
-                pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': i_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, info['grado'])
+            st.subheader("📄 Mis Recibos")
+            df_all2 = leer_datos()
+            # Filtramos los recibos del Q.H. logueado
+            mis_mov_raw = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df_all2['tipo_operacion'] == 'INGRESO')]
+            
+            if not mis_mov_raw.empty:
+                mis_mov_raw['m_id'] = mis_mov_raw['id'].apply(lambda x: x.split('-')[0])
+                
+                # Creamos la lista legible para el Hermano
+                opciones_propias = {}
+                for _, r in mis_mov_raw.sort_values(by='fecha', ascending=False).iterrows():
+                    label = f"Fecha: {r['fecha']} | ID: {r['m_id']}"
+                    opciones_propias[label] = r['m_id']
+                
+                seleccion_mre = st.selectbox("Seleccione Recibo para descargar", list(opciones_propias.keys()))
+                m_id = opciones_propias[seleccion_mre]
+                
+                # Generamos el PDF
+                items_r = mis_mov_raw[mis_mov_raw['m_id'] == m_id]
+                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in items_r.iterrows()]
+                pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
                 st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_{m_id}.pdf", mime="application/pdf")
+            else:
+                st.info("No tienes pagos registrados en el sistema.")
