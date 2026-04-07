@@ -60,7 +60,6 @@ def init_db():
                      (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno')")
-        client.execute("UPDATE usuarios SET nombre_qh='ADMINISTRADOR GENERAL' WHERE username='admin'")
         
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'Annijosé Goitia', 'Maestro Mason', 'Administrador', 1, 0, 'Tesorero')", (usr_anni,))
@@ -222,6 +221,21 @@ else:
             b_bs = df_actual[~df_actual['referencia'].str.contains("EFECTIVO", case=False, na=False)]['monto_bs'].sum()
             c_usd = df_actual[df_actual['referencia'].str.contains("EFECTIVO", case=False, na=False)]['monto_usd'].sum()
             st.metric("🏦 Banco Actual", f"{b_bs:,.2f} Bs."); st.metric("💵 Caja Actual", f"{c_usd:,.2f} $")
+        if is_hosp:
+            st.divider(); st.header("❤️ Resumen Hospitalario")
+            df_hosp_all = leer_datos("hospitalario")
+            si_hosp_registrado = not df_hosp_all[df_hosp_all['detalle'] == 'SALDO INICIAL'].empty
+            if not si_hosp_registrado:
+                st.warning("⚠️ Pendiente SI Hospitalario")
+                f_si_h = st.date_input("Fecha SI Hosp", datetime.now())
+                n_usd_h = st.number_input("Caja Hosp (USD)", min_value=0.0); n_bs_h = st.number_input("Caja Hosp (Bs)", min_value=0.0)
+                if st.button("💾 Guardar SI Hosp"):
+                    client = get_client()
+                    try: client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, 'SALDO INICIAL', ?, ?, ?)", (str(f_si_h), n_usd_h, st.session_state.tasa_actual, n_bs_h))
+                    finally: client.close()
+                    st.rerun()
+            tot_usd_h = df_hosp_all['monto_usd'].sum(); tot_bs_h = df_hosp_all['monto_bs'].sum()
+            st.metric("Fondo Hosp (USD)", f"{tot_usd_h:,.2f} $"); st.metric("Fondo Hosp (Bs)", f"{tot_bs_h:,.2f} Bs.")
 
     m_tabs = []
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
@@ -241,7 +255,7 @@ else:
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
-            es_historico = c_g3.checkbox("Registro Histórico ($0 en caja)", key=f"hist_{st.session_state.f_key}")
+            es_hist = c_g3.checkbox("Registro Histórico ($0 en caja)", key=f"hist_{st.session_state.f_key}")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
@@ -253,7 +267,7 @@ else:
                     else: d_t = ", ".join(m_list); m_t = (len(m_list) * 15.0)
                 else: d_t = c_i1.text_input("Descripción", key=f"desc_{st.session_state.f_key}"); m_t = c_i1.number_input("Monto USD", value=15.0, key=f"m_{st.session_state.f_key}")
                 ref_t_input = c_i2.text_input("Ref. Pago", key=f"ref_{st.session_state.f_key}")
-                if es_historico: m_t_f, m_b_f, r_f = 0.0, 0.0, "MIGRACIÓN HISTÓRICA"
+                if es_hist: m_t_f, m_b_f, r_f = 0.0, 0.0, "MIGRACIÓN HISTÓRICA"
                 else: m_t_f, m_b_f, r_f = m_t, round(m_t * ts_in, 2), "EFECTIVO" if met_in == "Efectivo USD" else ref_t_input
                 if c_i3.button("➕ Añadir"):
                     st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_f, "monto_bs": m_b_f, "ref": r_f})
@@ -267,10 +281,9 @@ else:
                     try:
                         for idx, item in enumerate(st.session_state.carrito):
                             client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
-                            # --- AJUSTE AUTOMÁTICO DE COMISIÓN BANCARIA (1,5%) ---
-                            if met_in == "Transferencia" and not es_historico:
+                            if met_in == "Transferencia" and not es_hist:
                                 com_bs = round(item['monto_bs'] * 0.015, 2); com_usd = round(com_bs / ts_in, 2)
-                                client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"COM-{id_m}-{idx}", str(fecha_p), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref In: {item["ref"]}', 'COMIS. CRI OB REC', -abs(com_usd), ts_in, -abs(com_bs)))
+                                client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"COM-{id_m}-{idx}", str(fecha_p), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {item["ref"]}', 'COMIS. CRI OB REC', -abs(com_usd), ts_in, -abs(com_bs)))
                     finally: client.close()
                     pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': st.session_state.carrito[0]['ref']}, st.session_state.carrito, dict_grados.get(qh_in, ""))
                     st.session_state.u_recibo = {"bytes": pdf_bytes, "n": f"Recibo_SIMBOLO_{id_m}.pdf"}; st.session_state.carrito = []; st.session_state.f_key += 1; st.rerun()
@@ -285,5 +298,88 @@ else:
             if not df_diario.empty:
                 csv_diario = df_diario.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button("📥 Exportar Libro Diario a Excel", data=csv_diario, file_name=f"Libro_Diario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
-    
-    # Resto de los módulos se mantienen iguales para no saturar la respuesta.
+
+    if TAB_DAS in m_tabs:
+        with tabs[m_tabs.index(TAB_DAS)]:
+            st.subheader("📊 Finanzas"); df_r = leer_datos()
+            if not df_r.empty: st.bar_chart(df_r.groupby('tipo_operacion')['monto_usd'].apply(lambda x: abs(x.sum())))
+            st.divider(); st.subheader("📈 Cumplimiento de Asistencia")
+            df_a = leer_datos("actas"); df_as = leer_datos("asistencia"); df_u = leer_datos("usuarios")
+            if not df_a.empty and not df_as.empty:
+                df_a['fecha'] = pd.to_datetime(df_a['fecha'], errors='coerce')
+                df_a['mes_anio'] = df_a['fecha'].dt.strftime('%Y-%m')
+                req_mensual = []
+                for mes, group in df_a.groupby('mes_anio'):
+                    ord_c = len(group[group['tipo_tenida'] == 'Ordinaria'])
+                    ext_c = len(group[group['tipo_tenida'].isin(['Extraordinaria', 'Instalación'])])
+                    req_mensual.append({'mes': mes, 'req_ap': min(2, ord_c) + ext_c, 'req_co': min(3, ord_c) + ext_c, 'req_mm': ord_c + ext_c})
+                df_req = pd.DataFrame(req_mensual)
+                res_asis = []
+                for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
+                    qh = u_row['nombre_qh']; grado = u_row['grado']
+                    req_t = df_req['req_ap'].sum() if grado == 'Aprendiz' else (df_req['req_co'].sum() if grado == 'Compañero' else df_req['req_mm'].sum())
+                    asis_t = len(df_as[(df_as['nombre_qh'] == qh) & (df_as['asistio'] == 1)])
+                    cumpl = (asis_t / req_t * 100) if req_t > 0 else 100.0
+                    res_asis.append({'Q.·.H.·.': qh, 'Grado': grado, 'Asist. Reales': asis_t, 'Asist. Requeridas': req_t, '% Cumplimiento': min(100.0, cumpl)})
+                if res_asis: st.dataframe(pd.DataFrame(res_asis).style.format({'% Cumplimiento': '{:.1f}%'}), use_container_width=True)
+
+    if TAB_CON in m_tabs:
+        with tabs[m_tabs.index(TAB_CON)]:
+            st.subheader("⚙️ Configuración")
+            st.write("**🛠️ Mantenimiento**")
+            if st.button("🧹 Normalizar Nombres de Usuario"):
+                client = get_client()
+                try:
+                    res_u = client.execute("SELECT username FROM usuarios")
+                    for r in res_u.rows:
+                        old_u = r[0]; new_u = quitar_acentos(old_u)
+                        if old_u != new_u: client.execute("UPDATE usuarios SET username=? WHERE username=?", [new_u, old_u])
+                    st.success("Usuarios normalizados.")
+                finally: client.close()
+            st.divider(); st.error("⚠️ Borrado Definitivo")
+            if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
+                if st.button("🚨 VACIAR BASE DE DATOS", type="primary"):
+                    client = get_client()
+                    try:
+                        client.execute("DELETE FROM movimientos"); client.execute("DELETE FROM actas")
+                        client.execute("DELETE FROM asistencia"); client.execute("DELETE FROM hospitalario")
+                    finally: client.close()
+                    logout()
+
+    if TAB_USU in m_tabs:
+        with tabs[m_tabs.index(TAB_USU)]:
+            st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios")
+            st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
+            c_u1, c_u2, c_u3 = st.columns(3)
+            with c_u1:
+                with st.expander("➕ Crear Nuevo"):
+                    with st.form("crear_u", clear_on_submit=True):
+                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password")
+                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS)
+                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
+                        if st.form_submit_button("Guardar"):
+                            client = get_client()
+                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn, ng, nr, 0, 0, nc))
+                            finally: client.close()
+                            st.rerun()
+            with c_u2:
+                with st.expander("✏️ Modificar Grado/Cargo"):
+                    with st.form("edit_u", clear_on_submit=True):
+                        u_m = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
+                        n_g = st.selectbox("Actualizar Grado", GRADOS); n_c = st.selectbox("Asignar Cargo", CARGOS)
+                        if st.form_submit_button("Actualizar"):
+                            client = get_client()
+                            try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
+                            finally: client.close()
+                            st.success("Perfil actualizado."); st.rerun()
+            with c_u3:
+                with st.expander("🔐 Cambiar Clave"):
+                    with st.form("mod_p", clear_on_submit=True):
+                        u_s = st.selectbox("Usuario", df_u['username'].tolist()); n_p = st.text_input("Nueva Clave", type="password")
+                        if st.form_submit_button("Actualizar"):
+                            client = get_client()
+                            try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
+                            finally: client.close()
+                            st.success("Clave actualizada.")
+
+    # Módulos de Acta y Portal se mantienen con su lógica estándar.
