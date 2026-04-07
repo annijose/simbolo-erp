@@ -334,19 +334,34 @@ else:
                 csv_diario = df_diario.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button("📥 Exportar Libro Diario a Excel", data=csv_diario, file_name=f"Libro_Diario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
 
-    # --- MÓDULO RECIBOS ---
+    # --- MÓDULO RECIBOS (ACTUALIZADO CON NOMBRE Y FECHA) ---
     if TAB_REC in m_tabs:
         with tabs[m_tabs.index(TAB_REC)]:
-            st.subheader("🖨️ Reimpresión")
-            df_rec = leer_datos(); df_rec = df_rec[df_rec['tipo_operacion'] == 'INGRESO']
-            if not df_rec.empty:
-                df_rec['m_id'] = df_rec['id'].apply(lambda x: x.split('-')[0])
-                id_s = st.selectbox("ID de Recibo", df_rec['m_id'].unique().tolist())
-                i_r = df_rec[df_rec['m_id'] == id_s]
+            st.subheader("🖨️ Reimpresión de Recibos")
+            df_rec_raw = leer_datos(); df_rec_raw = df_rec_raw[df_rec_raw['tipo_operacion'] == 'INGRESO']
+            
+            if not df_rec_raw.empty:
+                # Agrupamos para obtener una lista única de recibos con info legible
+                df_rec_raw['m_id'] = df_rec_raw['id'].apply(lambda x: x.split('-')[0])
+                
+                # Creamos un diccionario para el selectbox: "Label legible": "ID_real"
+                opciones_recibos = {}
+                for _, r in df_rec_raw.sort_values(by='fecha', ascending=False).iterrows():
+                    label = f"QH: {r['origen_destino']} | Fecha: {r['fecha']} | ID: {r['m_id']}"
+                    opciones_recibos[label] = r['m_id']
+                
+                seleccion_label = st.selectbox("Seleccione el recibo para reimprimir", list(opciones_recibos.keys()))
+                id_s = opciones_recibos[seleccion_label]
+                
+                # Procesamos la reimpresión
+                i_r = df_rec_raw[df_rec_raw['m_id'] == id_s]
                 l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in i_r.iterrows()]
                 qh_n = i_r['origen_destino'].iloc[0]
                 p_r = generar_recibo_multiple({'id': id_s, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
-                st.download_button(f"📄 Descargar {id_s}", p_r, f"Recibo_SIMBOLO_{id_s}.pdf", mime="application/pdf")
+                
+                st.download_button(f"📄 Descargar PDF de {qh_n} ({id_s})", p_r, f"Recibo_{qh_n}_{id_s}.pdf", mime="application/pdf")
+            else:
+                st.info("No hay recibos registrados para mostrar.")
 
     # --- MÓDULO DASHBOARDS ---
     if TAB_DAS in m_tabs:
@@ -461,7 +476,7 @@ else:
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
                             finally: client.close()
-                            st.rerun()
+                            st.success("Perfil actualizado."); st.rerun()
             with c_u3:
                 with st.expander("🔐 Clave"):
                     with st.form("mod_p", clear_on_submit=True):
@@ -470,7 +485,7 @@ else:
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
                             finally: client.close()
-                            st.rerun()
+                            st.success("Clave actualizada.")
 
     # --- MÓDULO CONFIGURACIÓN ---
     if TAB_CON in m_tabs:
@@ -486,7 +501,7 @@ else:
                     st.success("Usuarios normalizados.")
                 finally: client.close()
             st.divider(); st.error("🚨 ZONA DE PELIGRO")
-            if st.checkbox("Confirmo que deseo BORRAR todo"):
+            if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
                     try:
