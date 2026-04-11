@@ -266,8 +266,15 @@ else:
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
+            
+            # --- AJUSTE COMISIÓN OTROS BANCOS ---
+            comision_ajuste = False
+            if met_in == "Transferencia":
+                comision_ajuste = st.checkbox("¿Es transferencia desde OTRO BANCO? (Aplica 1.5%)", value=True, key=f"com_{st.session_state.f_key}")
+            
             es_hist = c_g3.checkbox("Registro Histórico ($0 en caja)", key=f"hist_{st.session_state.f_key}")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
+            
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
                 cat_t = c_i1.selectbox("Concepto", CAT_INGRESO, key=f"cat_{st.session_state.f_key}")
@@ -283,6 +290,7 @@ else:
                 if c_i3.button("➕ Añadir"):
                     st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_f, "monto_bs": m_b_f, "ref": r_f})
                     st.rerun()
+            
             if st.session_state.carrito:
                 for i, it in enumerate(st.session_state.carrito):
                     cols = st.columns([4,1,1,0.5]); cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
@@ -292,7 +300,8 @@ else:
                     try:
                         for idx, item in enumerate(st.session_state.carrito):
                             client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
-                            if met_in == "Transferencia" and not es_hist:
+                            # --- LÓGICA DE COMISIÓN AJUSTADA ---
+                            if met_in == "Transferencia" and not es_hist and comision_ajuste:
                                 com_bs = round(item['monto_bs'] * 0.015, 2); com_usd = round(com_bs / ts_in, 2)
                                 client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"COM-{id_m}-{idx}", str(fecha_p), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {item["ref"]}', 'COMIS. CRI OB REC', -abs(com_usd), ts_in, -abs(com_bs)))
                     finally: client.close()
@@ -517,27 +526,18 @@ else:
 
     if TAB_MRE in m_tabs:
         with tabs[m_tabs.index(TAB_MRE)]:
-            st.subheader("📄 Mis Recibos")
-            df_all2 = leer_datos()
-            # Filtramos los recibos del Q.H. logueado
+            st.subheader("📄 Mis Recibos"); df_all2 = leer_datos()
             mis_mov_raw = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df_all2['tipo_operacion'] == 'INGRESO')]
-            
             if not mis_mov_raw.empty:
                 mis_mov_raw['m_id'] = mis_mov_raw['id'].apply(lambda x: x.split('-')[0])
-                
-                # Creamos la lista legible para el Hermano
                 opciones_propias = {}
                 for _, r in mis_mov_raw.sort_values(by='fecha', ascending=False).iterrows():
                     label = f"Fecha: {r['fecha']} | ID: {r['m_id']}"
                     opciones_propias[label] = r['m_id']
-                
                 seleccion_mre = st.selectbox("Seleccione Recibo para descargar", list(opciones_propias.keys()))
                 m_id = opciones_propias[seleccion_mre]
-                
-                # Generamos el PDF
                 items_r = mis_mov_raw[mis_mov_raw['m_id'] == m_id]
                 l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in items_r.iterrows()]
                 pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
                 st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_{m_id}.pdf", mime="application/pdf")
-            else:
-                st.info("No tienes pagos registrados en el sistema.")
+            else: st.info("No tienes pagos registrados en el sistema.")
