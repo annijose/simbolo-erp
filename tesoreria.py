@@ -50,7 +50,7 @@ def init_db():
                      (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
                       categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         client.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                     (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
+                     (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT, estatus TEXT DEFAULT 'Activo')''')
         client.execute('''CREATE TABLE IF NOT EXISTS actas 
                      (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
         client.execute('''CREATE TABLE IF NOT EXISTS asistencia 
@@ -58,17 +58,16 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
                      (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
-        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno')")
+        # Migración automática si la base de datos es vieja
+        try:
+            client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
+        except:
+            pass
+
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno', 'Activo')")
         
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
-        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')", (usr_anni,))
-
-        res = client.execute("SELECT count(*) FROM usuarios")
-        if res.rows[0][0] < 20:
-            viejos_miembros = ["RAMÓN DEBROT", "OMAR ARCANO", "JOSÉ LUIS NUÑEZ", "JORGE DELGADO", "ANGEL RINCÓN", "CARLOS RINCÓN", "JUMAR RENGIFO", "LEONARDO RIVAS", "CIRPIANO HEREDIA", "JOSÉ DANIEL MEZA", "MARCOS PENOTT", "KOXZARTC GONZALEZ", "DANINGER BARRETO", "FRANCISCO GONZALEZ", "MOISÉS PENOTT", "FRANCISCO JAVIER RIVAS", "LEOPOLDO CADAVID", "YORGER MAITA", "OSCAR QUINTERO PONCE", "OSCAR QUINTERO GALLER", "LEONEL SALAZAR", "RAYMOND MURO", "HEVELMIR BARRETO"]
-            for m in viejos_miembros:
-                usr = quitar_acentos(m.replace(" ", "").lower())
-                client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (usr, '123', m, 'Maestro Mason', 'Usuario', 0, 0, 'Ninguno'))
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero', 'Activo')", (usr_anni,))
     finally:
         client.close()
 
@@ -90,7 +89,7 @@ def leer_datos(tabla="movimientos"):
 def obtener_miembros():
     client = get_client()
     try:
-        res = client.execute("SELECT nombre_qh, grado FROM usuarios")
+        res = client.execute("SELECT nombre_qh, grado FROM usuarios WHERE estatus='Activo' OR estatus IS NULL")
         df = pd.DataFrame([list(r) for r in res.rows], columns=res.columns)
     finally:
         client.close()
@@ -396,6 +395,10 @@ else:
         with tabs[m_tabs.index(TAB_DAS)]:
             st.title("📊 Auditoría y Balances")
             df_m = leer_datos()
+            df_u = leer_datos("usuarios")
+            
+            # FILTRO DE USUARIOS ACTIVOS PARA REPORTES
+            df_u_activos = df_u[((df_u['estatus'] == 'Activo') | (df_u['estatus'].isna())) & (~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL']))]
             
             st.subheader("🗓️ Reporte de Balance Trimestral")
             c_b1, c_b2 = st.columns(2)
@@ -441,9 +444,9 @@ else:
                 if not df_egr_real.empty: st.dataframe(df_egr_real[['fecha', 'origen_destino', 'categoria', 'monto_usd', 'monto_bs', 'referencia']].style.format(formatear_miles(df_egr_real)), use_container_width=True)
 
             st.divider(); st.subheader("🗓️ Cuadro de Control de Pagos (Solvencia Anual)")
-            df_u = leer_datos("usuarios"); df_p = df_m[(df_m['categoria'] == 'Capitación Mensual') & (df_m['tipo_operacion'] == 'INGRESO')]
+            df_p = df_m[(df_m['categoria'] == 'Capitación Mensual') & (df_m['tipo_operacion'] == 'INGRESO')]
             matriz_pagos = []
-            for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
+            for _, u_row in df_u_activos.iterrows():
                 qh = u_row['nombre_qh']; pagos_qh = " ".join(df_p[df_p['origen_destino'] == qh]['detalle'].tolist()); fila = {'Q.·.H.·.': qh}
                 es_solvente_total = "AÑO COMPLETO" in pagos_qh
                 for mes in MESES_ANNO: fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
@@ -451,8 +454,8 @@ else:
             if matriz_pagos: st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
             
             st.divider(); st.subheader("📉 Índice de Morosidad por Capitación")
-            miembros_activos = df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])]
-            tot_activos = len(miembros_activos)
+            st.info("Porcentaje de QQ.·.HH.·. que adeudan los meses vencidos del año.")
+            tot_activos = len(df_u_activos)
             if tot_activos > 0:
                 m_idx = datetime.now().month
                 meses_eval = MESES_ANNO[:m_idx-1] if m_idx > 1 else []
@@ -460,7 +463,7 @@ else:
                     datos_deuda = []
                     for m in meses_eval:
                         pagaron = 0
-                        for _, u_row in miembros_activos.iterrows():
+                        for _, u_row in df_u_activos.iterrows():
                             pqh = " ".join(df_p[df_p['origen_destino'] == u_row['nombre_qh']]['detalle'].tolist())
                             if m in pqh or "AÑO COMPLETO" in pqh: pagaron += 1
                         mora = tot_activos - pagaron
@@ -484,7 +487,7 @@ else:
                     req_mensual.append({'mes': mes, 'req_ap': min(2, ord_c) + ext_c, 'req_co': min(3, ord_c) + ext_c, 'req_mm': ord_c + ext_c})
                 df_req = pd.DataFrame(req_mensual)
                 res_asis = []
-                for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
+                for _, u_row in df_u_activos.iterrows():
                     qh = u_row['nombre_qh']; grado = u_row['grado']
                     req_t = df_req['req_ap'].sum() if grado == 'Aprendiz' else (df_req['req_co'].sum() if grado == 'Compañero' else df_req['req_mm'].sum())
                     asis_t = len(df_as[(df_as['nombre_qh'] == qh) & (df_as['asistio'] == 1)])
@@ -545,17 +548,16 @@ else:
     if TAB_USU in m_tabs:
         with tabs[m_tabs.index(TAB_USU)]:
             st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios")
-            st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
+            st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol', 'estatus']], use_container_width=True)
             c_u1, c_u2, c_u3, c_u4 = st.columns(4)
             with c_u1:
                 with st.expander("➕ Crear Nuevo"):
                     with st.form("crear_u", clear_on_submit=True):
-                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password")
-                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS)
-                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
+                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password"); nn = st.text_input("Nombre Q.·.H.·.")
+                        ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
-                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn.upper(), ng, nr, 0, 0, nc))
+                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?,?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn.upper(), ng, nr, 0, 0, nc, 'Activo'))
                             finally: client.close(); st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar"):
@@ -574,13 +576,14 @@ else:
                             try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
                             finally: client.close(); st.success("Clave actualizada."); st.rerun()
             with c_u4:
-                with st.expander("🗑️ Eliminar"):
-                    with st.form("del_u", clear_on_submit=True):
-                        u_d = st.selectbox("Seleccionar a Eliminar", df_u['nombre_qh'].tolist())
-                        if st.form_submit_button("Eliminar", type="primary"):
+                with st.expander("🚫 Activar/Inactivar"):
+                    with st.form("status_u", clear_on_submit=True):
+                        u_status = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
+                        nuevo_estatus = st.selectbox("Estatus", ["Activo", "Inactivo"])
+                        if st.form_submit_button("Actualizar Estatus", type="primary"):
                             client = get_client()
-                            try: client.execute("DELETE FROM usuarios WHERE nombre_qh=?", (u_d,))
-                            finally: client.close(); st.success("Usuario eliminado."); st.rerun()
+                            try: client.execute("UPDATE usuarios SET estatus=? WHERE nombre_qh=?", (nuevo_estatus, u_status))
+                            finally: client.close(); st.success(f"Estatus de {u_status} actualizado a {nuevo_estatus}."); st.rerun()
 
     # --- CONFIGURACIÓN ---
     if TAB_CON in m_tabs:
