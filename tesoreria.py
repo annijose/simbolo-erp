@@ -46,15 +46,29 @@ def get_client():
 def init_db():
     client = get_client()
     try:
-        client.execute('''CREATE TABLE IF NOT EXISTS movimientos (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS actas (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS movimientos 
+                     (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
+                      categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                     (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS actas 
+                     (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS asistencia 
+                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
+                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno')")
+        
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
-        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'Annijosé Goitia', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')", (usr_anni,))
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')", (usr_anni,))
+
+        res = client.execute("SELECT count(*) FROM usuarios")
+        if res.rows[0][0] < 20:
+            viejos_miembros = ["RAMÓN DEBROT", "OMAR ARCANO", "JOSÉ LUIS NUÑEZ", "JORGE DELGADO", "ANGEL RINCÓN", "CARLOS RINCÓN", "JUMAR RENGIFO", "LEONARDO RIVAS", "CIRPIANO HEREDIA", "JOSÉ DANIEL MEZA", "MARCOS PENOTT", "KOXZARTC GONZALEZ", "DANINGER BARRETO", "FRANCISCO GONZALEZ", "MOISÉS PENOTT", "FRANCISCO JAVIER RIVAS", "LEOPOLDO CADAVID", "YORGER MAITA", "OSCAR QUINTERO PONCE", "OSCAR QUINTERO GALLER", "LEONEL SALAZAR", "RAYMOND MURO", "HEVELMIR BARRETO"]
+            for m in viejos_miembros:
+                usr = quitar_acentos(m.replace(" ", "").lower())
+                client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (usr, '123', m, 'Maestro Mason', 'Usuario', 0, 0, 'Ninguno'))
     finally:
         client.close()
 
@@ -435,10 +449,8 @@ else:
                 for mes in MESES_ANNO: fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
                 matriz_pagos.append(fila)
             if matriz_pagos: st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
-
-            # --- NUEVO: REPORTE DE MOROSIDAD ---
+            
             st.divider(); st.subheader("📉 Índice de Morosidad por Capitación")
-            st.info("Porcentaje de QQ.·.HH.·. que adeudan los meses vencidos del año.")
             miembros_activos = df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])]
             tot_activos = len(miembros_activos)
             if tot_activos > 0:
@@ -458,9 +470,8 @@ else:
                     col_mor1, col_mor2 = st.columns([1.5, 2])
                     with col_mor1: st.dataframe(df_mora.style.format({'% Deuda': '{:.1f}%'}), use_container_width=True)
                     with col_mor2: st.bar_chart(df_mora.set_index("Mes")[["% Deuda"]])
-                else:
-                    st.success("Aún no hay meses vencidos en el año para evaluar morosidad.")
-            
+                else: st.success("Aún no hay meses vencidos en el año para evaluar morosidad.")
+
             st.divider(); st.subheader("📈 Cumplimiento de Asistencia")
             df_a = leer_datos("actas"); df_as = leer_datos("asistencia")
             if not df_a.empty and not df_as.empty:
@@ -533,16 +544,18 @@ else:
     # --- USUARIOS ---
     if TAB_USU in m_tabs:
         with tabs[m_tabs.index(TAB_USU)]:
-            st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios"); st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
-            c_u1, c_u2, c_u3 = st.columns(3)
+            st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios")
+            st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
+            c_u1, c_u2, c_u3, c_u4 = st.columns(4)
             with c_u1:
                 with st.expander("➕ Crear Nuevo"):
                     with st.form("crear_u", clear_on_submit=True):
-                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password"); nn = st.text_input("Nombre Q.·.H.·.")
-                        ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
+                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password")
+                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS)
+                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
-                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn, ng, nr, 0, 0, nc))
+                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn.upper(), ng, nr, 0, 0, nc))
                             finally: client.close(); st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar"):
@@ -559,7 +572,15 @@ else:
                         if st.form_submit_button("Actualizar"):
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
-                            finally: client.close(); st.success("Clave actualizada.")
+                            finally: client.close(); st.success("Clave actualizada."); st.rerun()
+            with c_u4:
+                with st.expander("🗑️ Eliminar"):
+                    with st.form("del_u", clear_on_submit=True):
+                        u_d = st.selectbox("Seleccionar a Eliminar", df_u['nombre_qh'].tolist())
+                        if st.form_submit_button("Eliminar", type="primary"):
+                            client = get_client()
+                            try: client.execute("DELETE FROM usuarios WHERE nombre_qh=?", (u_d,))
+                            finally: client.close(); st.success("Usuario eliminado."); st.rerun()
 
     # --- CONFIGURACIÓN ---
     if TAB_CON in m_tabs:
@@ -581,15 +602,14 @@ else:
                         st.success("Anulado."); st.rerun()
                     finally: client.close()
             st.divider(); st.error("🚨 ZONA DE PELIGRO")
-            if st.button("🧹 Normalizar Usuarios"):
+            if st.button("🔠 Convertir Nombres a MAYÚSCULAS"):
                 client = get_client()
                 try:
-                    res_u = client.execute("SELECT username FROM usuarios")
-                    for r in res_u.rows:
-                        old = r[0]; new = quitar_acentos(old)
-                        if old != new: client.execute("UPDATE usuarios SET username=? WHERE username=?", [new, old])
-                    st.success("Usuarios normalizados.")
-                finally: client.close()
+                    client.execute("UPDATE usuarios SET nombre_qh = UPPER(nombre_qh)")
+                    client.execute("UPDATE movimientos SET origen_destino = UPPER(origen_destino)")
+                    client.execute("UPDATE asistencia SET nombre_qh = UPPER(nombre_qh)")
+                    st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
+                finally: client.close(); st.rerun()
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
