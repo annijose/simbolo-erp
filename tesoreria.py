@@ -165,36 +165,46 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     pdf.cell(40, 8, "Recibido de:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {nombre_completo}"), 1, 1)
     pdf.set_font('Arial', 'B', 10); pdf.cell(40, 8, "Fecha / Ref:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {datos_master['fecha']} / {datos_master['ref']}"), 1, 1); pdf.ln(5)
     
-    # --- LOGICA MEJORADA DE SOLVENCIA EN RECIBO ---
+    # --- AUDITORÍA DE SOLVENCIA REAL ---
     es_historico = any("HISTÓRICA" in str(item.get('ref', '')) for item in items_carrito)
     mes_limite = "la fecha"
+    meses_en_este_pago = []
     
-    # Buscar el último mes de capitación en los items
-    lista_meses_encontrados = []
     for it in items_carrito:
         if it['categoria'] == "Capitación Mensual":
-            # Si es año completo
             if "AÑO COMPLETO" in it['detalle']:
-                mes_limite = "Diciembre"
+                meses_en_este_pago = MESES_ANNO
                 break
-            # Si son meses individuales, buscamos cuál es el último según la lista maestra
             for m in MESES_ANNO:
-                if m in it['detalle']:
-                    lista_meses_encontrados.append(m)
-    
-    if lista_meses_encontrados and mes_limite == "la fecha":
-        # Ordenamos los meses encontrados segun el orden cronologico real
-        meses_ordenados = [m for m in MESES_ANNO if m in lista_meses_encontrados]
-        if meses_ordenados:
-            mes_limite = meses_ordenados[-1]
+                if m in it['detalle']: meses_en_este_pago.append(m)
 
-    if es_historico:
-        pdf.set_text_color(180, 0, 0)
-        pdf.set_font('Arial', 'B', 10)
-        pdf.cell(0, 8, texto_seguro("NOTA: ESTE ES UN REGISTRO HISTÓRICO DE MIGRACIÓN."), ln=True, align='L')
-        pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta el mes de {mes_limite}."), ln=True, align='L')
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(2)
+    if meses_en_este_pago:
+        meses_ordenados = [m for m in MESES_ANNO if m in meses_en_este_pago]
+        mes_limite = meses_ordenados[-1]
+        
+        # Verificamos si hay huecos (ej. paga Marzo pero falta Enero)
+        primer_mes_pago_idx = MESES_ANNO.index(meses_ordenados[0])
+        meses_que_deberian_estar_pagos = MESES_ANNO[:primer_mes_pago_idx]
+        
+        # Consultamos la base de datos para ver si esos meses previos existen
+        client = get_client()
+        try:
+            res_prev = client.execute("SELECT detalle FROM movimientos WHERE origen_destino=? AND categoria='Capitación Mensual'", (datos_master['qh'],))
+            todos_detalles_previos = " ".join([r[0] for r in res_prev.rows])
+            faltan_meses_previos = any(m not in todos_detalles_previos for m in meses_que_deberian_estar_pagos)
+        finally:
+            client.close()
+
+        if es_historico:
+            pdf.set_text_color(180, 0, 0)
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(0, 8, texto_seguro("NOTA: ESTE ES UN REGISTRO HISTÓRICO DE MIGRACIÓN."), ln=True, align='L')
+            if faltan_meses_previos and "AÑO COMPLETO" not in str(items_carrito):
+                pdf.cell(0, 8, texto_seguro(f"AVISO: Existen meses anteriores pendientes en el historial."), ln=True, align='L')
+            else:
+                pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta el mes de {mes_limite}."), ln=True, align='L')
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(2)
 
     pdf.set_font('Arial', 'B', 9); pdf.set_fill_color(230, 230, 230); pdf.cell(80, 7, "Concepto", 1, 0, 'C', True); pdf.cell(50, 7, "Monto USD", 1, 0, 'C', True); pdf.cell(50, 7, "Monto Bs.", 1, 1, 'C', True)
     pdf.set_font('Arial', '', 9)
@@ -506,8 +516,8 @@ else:
                 with st.expander("➕ Crear Nuevo"):
                     with st.form("crear_u", clear_on_submit=True):
                         nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password")
-                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS)
-                        nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
+                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS)
+                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
                             try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn, ng, nr, 0, 0, nc))
@@ -522,7 +532,7 @@ else:
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
                             finally: client.close()
-                            st.success("Perfil actualizado."); st.rerun()
+                            st.rerun()
             with c_u3:
                 with st.expander("🔐 Clave"):
                     with st.form("mod_p", clear_on_submit=True):
