@@ -46,26 +46,16 @@ def get_client():
 def init_db():
     client = get_client()
     try:
-        client.execute('''CREATE TABLE IF NOT EXISTS movimientos 
-                     (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
-                      categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                     (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT, estatus TEXT DEFAULT 'Activo')''')
-        client.execute('''CREATE TABLE IF NOT EXISTS actas 
-                     (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS asistencia 
-                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
-                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS movimientos (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT, estatus TEXT DEFAULT 'Activo')''')
+        client.execute('''CREATE TABLE IF NOT EXISTS actas (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
-        # Migración automática si la base de datos es vieja
-        try:
-            client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
-        except:
-            pass
+        try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
+        except: pass
 
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno', 'Activo')")
-        
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero', 'Activo')", (usr_anni,))
     finally:
@@ -124,6 +114,36 @@ def formatear_miles(df):
         if col in df.columns:
             formato[col] = lambda x: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     return formato
+
+# --- MOTOR DE INTELIGENCIA FINANCIERA ---
+def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd):
+    if df_trim.empty:
+        return "No hay suficientes datos procesados en este trimestre para generar un análisis."
+    
+    tasa_ref = st.session_state.tasa_actual
+    total_ing_equiv_bs = t_ing_bs + (t_ing_usd * tasa_ref)
+    total_egr_equiv_bs = abs(t_egr_bs) + abs(t_egr_usd * tasa_ref)
+    
+    flujo_neto = total_ing_equiv_bs - total_egr_equiv_bs
+    
+    analisis = "💡 **Corte Ejecutivo para la Tenida:**\n\n"
+    
+    if flujo_neto > 0:
+        analisis += f"✅ **Estatus Operativo:** La Logia mantiene un superávit trimestral. Los ingresos totales ({total_ing_equiv_bs:,.2f} Bs. equiv.) superaron a los egresos ({total_egr_equiv_bs:,.2f} Bs. equiv.), generando un flujo de caja positivo de **{flujo_neto:,.2f} Bs.**\n\n"
+    elif flujo_neto < 0:
+        analisis += f"⚠️ **Alerta de Déficit:** Los egresos operativos ({total_egr_equiv_bs:,.2f} Bs. equiv.) superaron los ingresos del trimestre ({total_ing_equiv_bs:,.2f} Bs. equiv.) por una diferencia de **{abs(flujo_neto):,.2f} Bs.** Se sugiere implementar medidas de recaudación.\n\n"
+    else:
+        analisis += "⚖️ **Punto de Equilibrio:** Los ingresos y egresos del taller se encuentran perfectamente equilibrados.\n\n"
+        
+    df_egresos = df_trim[df_trim['tipo_operacion'] == 'EGRESO'].copy()
+    if not df_egresos.empty:
+        df_egresos['equiv_bs'] = df_egresos.apply(lambda x: abs(x['monto_bs']) if x['monto_bs'] != 0 else abs(x['monto_usd'] * x['tasa_bcv']), axis=1)
+        # Excluimos "Comisión Bancaria" si queremos ver el gasto real, o lo dejamos. Lo dejamos para auditar todo.
+        gasto_mayor = df_egresos.groupby('categoria')['equiv_bs'].sum().idxmax()
+        monto_mayor = df_egresos.groupby('categoria')['equiv_bs'].sum().max()
+        analisis += f"📊 **Foco de Gastos:** El mayor desembolso de fondos de la Logia este trimestre fue destinado a la categoría **'{gasto_mayor}'** (Aprox. {monto_mayor:,.2f} Bs.).\n"
+        
+    return analisis
 
 class FormatoPDF(FPDF):
     def header(self):
@@ -396,8 +416,6 @@ else:
             st.title("📊 Auditoría y Balances")
             df_m = leer_datos()
             df_u = leer_datos("usuarios")
-            
-            # FILTRO DE USUARIOS ACTIVOS PARA REPORTES
             df_u_activos = df_u[((df_u['estatus'] == 'Activo') | (df_u['estatus'].isna())) & (~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL']))]
             
             st.subheader("🗓️ Reporte de Balance Trimestral")
@@ -419,6 +437,10 @@ else:
                 t_ing_usd = df_caja[df_caja['tipo_operacion'] == 'INGRESO']['monto_usd'].sum()
                 t_egr_usd = df_caja[df_caja['tipo_operacion'] == 'EGRESO']['monto_usd'].sum()
                 saldo_caja_trim = t_ing_usd + t_egr_usd
+
+                # --- NUEVO: MOTOR DE INTELIGENCIA FINANCIERA ---
+                with st.expander("🤖 Análisis de Inteligencia Financiera", expanded=True):
+                    st.markdown(generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd))
 
                 col_trim1, col_trim2, col_trim3 = st.columns(3)
                 col_trim1.metric("Movimiento Banco (Bs)", f"{saldo_banco_trim:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -454,7 +476,6 @@ else:
             if matriz_pagos: st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
             
             st.divider(); st.subheader("📉 Índice de Morosidad por Capitación")
-            st.info("Porcentaje de QQ.·.HH.·. que adeudan los meses vencidos del año.")
             tot_activos = len(df_u_activos)
             if tot_activos > 0:
                 m_idx = datetime.now().month
