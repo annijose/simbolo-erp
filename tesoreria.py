@@ -165,13 +165,34 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     pdf.cell(40, 8, "Recibido de:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {nombre_completo}"), 1, 1)
     pdf.set_font('Arial', 'B', 10); pdf.cell(40, 8, "Fecha / Ref:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {datos_master['fecha']} / {datos_master['ref']}"), 1, 1); pdf.ln(5)
     
-    # Nota de Registro Histórico
+    # --- LOGICA MEJORADA DE SOLVENCIA EN RECIBO ---
     es_historico = any("HISTÓRICA" in str(item.get('ref', '')) for item in items_carrito)
+    mes_limite = "la fecha"
+    
+    # Buscar el último mes de capitación en los items
+    lista_meses_encontrados = []
+    for it in items_carrito:
+        if it['categoria'] == "Capitación Mensual":
+            # Si es año completo
+            if "AÑO COMPLETO" in it['detalle']:
+                mes_limite = "Diciembre"
+                break
+            # Si son meses individuales, buscamos cuál es el último según la lista maestra
+            for m in MESES_ANNO:
+                if m in it['detalle']:
+                    lista_meses_encontrados.append(m)
+    
+    if lista_meses_encontrados and mes_limite == "la fecha":
+        # Ordenamos los meses encontrados segun el orden cronologico real
+        meses_ordenados = [m for m in MESES_ANNO if m in lista_meses_encontrados]
+        if meses_ordenados:
+            mes_limite = meses_ordenados[-1]
+
     if es_historico:
-        pdf.set_text_color(200, 0, 0)
+        pdf.set_text_color(180, 0, 0)
         pdf.set_font('Arial', 'B', 10)
         pdf.cell(0, 8, texto_seguro("NOTA: ESTE ES UN REGISTRO HISTÓRICO DE MIGRACIÓN."), ln=True, align='L')
-        pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta la fecha de este registro."), ln=True, align='L')
+        pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta el mes de {mes_limite}."), ln=True, align='L')
         pdf.set_text_color(0, 0, 0)
         pdf.ln(2)
 
@@ -485,8 +506,8 @@ else:
                 with st.expander("➕ Crear Nuevo"):
                     with st.form("crear_u", clear_on_submit=True):
                         nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password")
-                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS)
-                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
+                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS)
+                        nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
                             try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn, ng, nr, 0, 0, nc))
