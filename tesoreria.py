@@ -159,13 +159,15 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
             client.close()
 
         if es_historico:
-            pdf.set_text_color(180, 0, 0); pdf.set_font('Arial', 'B', 10)
+            pdf.set_text_color(180, 0, 0)
+            pdf.set_font('Arial', 'B', 10)
             pdf.cell(0, 8, texto_seguro("NOTA: ESTE ES UN REGISTRO HISTÓRICO DE MIGRACIÓN."), ln=True, align='L')
             if faltan_meses_previos and "AÑO COMPLETO" not in str(items_carrito):
                 pdf.cell(0, 8, texto_seguro(f"AVISO: Existen meses anteriores pendientes en el historial."), ln=True, align='L')
             else:
                 pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta el mes de {mes_limite}."), ln=True, align='L')
-            pdf.set_text_color(0, 0, 0); pdf.ln(2)
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(2)
 
     pdf.set_font('Arial', 'B', 9); pdf.set_fill_color(230, 230, 230); pdf.cell(80, 7, "Concepto", 1, 0, 'C', True); pdf.cell(50, 7, "Monto USD", 1, 0, 'C', True); pdf.cell(50, 7, "Monto Bs.", 1, 1, 'C', True)
     pdf.set_font('Arial', '', 9)
@@ -177,7 +179,8 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     if os.path.exists("sello.png"): pdf.image("sello.png", x=40, y=y_actual, w=35)
     if os.path.exists("firma.png"): pdf.image("firma.png", x=140, y=y_actual, w=35)
     pdf.ln(35)
-    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, texto_seguro("Annijosé Goitia León"), ln=True, align='R'); pdf.set_font('Arial', 'I', 9); pdf.cell(0, 5, "Tesorero", ln=True, align='R')
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, texto_seguro("Annijosé Goitia León"), ln=True, align='R')
+    pdf.set_font('Arial', 'I', 9); pdf.cell(0, 5, "Tesorero", ln=True, align='R')
     salida = pdf.output(dest='S')
     return salida.encode('latin-1', 'replace') if isinstance(salida, str) else bytes(salida)
 
@@ -384,7 +387,6 @@ else:
             c_b1, c_b2 = st.columns(2)
             trim_sel = c_b1.selectbox("Seleccione Trimestre", ["1er Trimestre (Ene-Mar)", "2do Trimestre (Abr-Jun)", "3er Trimestre (Jul-Sep)", "4to Trimestre (Oct-Dic)"], index=1)
             año_sel = c_b2.selectbox("Año Auditoría", [2025, 2026], index=1)
-            
             meses_trim = {"1er Trimestre (Ene-Mar)": [1, 2, 3], "2do Trimestre (Abr-Jun)": [4, 5, 6], "3er Trimestre (Jul-Sep)": [7, 8, 9], "4to Trimestre (Oct-Dic)": [10, 11, 12]}
             
             if not df_m.empty:
@@ -433,6 +435,31 @@ else:
                 for mes in MESES_ANNO: fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
                 matriz_pagos.append(fila)
             if matriz_pagos: st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
+
+            # --- NUEVO: REPORTE DE MOROSIDAD ---
+            st.divider(); st.subheader("📉 Índice de Morosidad por Capitación")
+            st.info("Porcentaje de QQ.·.HH.·. que adeudan los meses vencidos del año.")
+            miembros_activos = df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])]
+            tot_activos = len(miembros_activos)
+            if tot_activos > 0:
+                m_idx = datetime.now().month
+                meses_eval = MESES_ANNO[:m_idx-1] if m_idx > 1 else []
+                if meses_eval:
+                    datos_deuda = []
+                    for m in meses_eval:
+                        pagaron = 0
+                        for _, u_row in miembros_activos.iterrows():
+                            pqh = " ".join(df_p[df_p['origen_destino'] == u_row['nombre_qh']]['detalle'].tolist())
+                            if m in pqh or "AÑO COMPLETO" in pqh: pagaron += 1
+                        mora = tot_activos - pagaron
+                        p_mora = (mora / tot_activos) * 100
+                        datos_deuda.append({"Mes": m, "Solventes": pagaron, "En Mora": mora, "% Deuda": p_mora})
+                    df_mora = pd.DataFrame(datos_deuda)
+                    col_mor1, col_mor2 = st.columns([1.5, 2])
+                    with col_mor1: st.dataframe(df_mora.style.format({'% Deuda': '{:.1f}%'}), use_container_width=True)
+                    with col_mor2: st.bar_chart(df_mora.set_index("Mes")[["% Deuda"]])
+                else:
+                    st.success("Aún no hay meses vencidos en el año para evaluar morosidad.")
             
             st.divider(); st.subheader("📈 Cumplimiento de Asistencia")
             df_a = leer_datos("actas"); df_as = leer_datos("asistencia")
@@ -461,8 +488,7 @@ else:
             with st.expander("➕ Cargar Nueva Acta y Asistencia", expanded=True):
                 with st.form("f_acta", clear_on_submit=True):
                     c1, c2 = st.columns(2); f_a = c1.date_input("Fecha Tenida"); t_a = c1.selectbox("Tipo", ["Ordinaria", "Extraordinaria", "Instalación", "Fúnebre"])
-                    g_a = c2.selectbox("Grado Tenida", GRADOS)
-                    lista_h_f = [qh for qh in lista_qh if qh not in ["CABALLERO PROFANO", "ADMINISTRADOR GENERAL"]]
+                    g_a = c2.selectbox("Grado Tenida", GRADOS); lista_h_f = [qh for qh in lista_qh if qh not in ["CABALLERO PROFANO", "ADMINISTRADOR GENERAL"]]
                     pres = st.multiselect("QQ.·.HH.·. Presentes", lista_h_f); bosq = st.text_area("Bosquejo / Orden del Día")
                     if st.form_submit_button("💾 Guardar Acta"):
                         id_a = f"ACT-{f_a.strftime('%y%m%d')}"; client = get_client()
@@ -507,8 +533,7 @@ else:
     # --- USUARIOS ---
     if TAB_USU in m_tabs:
         with tabs[m_tabs.index(TAB_USU)]:
-            st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios")
-            st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
+            st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios"); st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
             c_u1, c_u2, c_u3 = st.columns(3)
             with c_u1:
                 with st.expander("➕ Crear Nuevo"):
