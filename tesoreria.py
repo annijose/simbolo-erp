@@ -266,15 +266,11 @@ else:
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
-            
-            # --- AJUSTE COMISIÓN OTROS BANCOS ---
             comision_ajuste = False
             if met_in == "Transferencia":
                 comision_ajuste = st.checkbox("¿Es transferencia desde OTRO BANCO? (Aplica 1.5%)", value=True, key=f"com_{st.session_state.f_key}")
-            
             es_hist = c_g3.checkbox("Registro Histórico ($0 en caja)", key=f"hist_{st.session_state.f_key}")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
-            
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
                 cat_t = c_i1.selectbox("Concepto", CAT_INGRESO, key=f"cat_{st.session_state.f_key}")
@@ -290,7 +286,6 @@ else:
                 if c_i3.button("➕ Añadir"):
                     st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_f, "monto_bs": m_b_f, "ref": r_f})
                     st.rerun()
-            
             if st.session_state.carrito:
                 for i, it in enumerate(st.session_state.carrito):
                     cols = st.columns([4,1,1,0.5]); cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
@@ -300,7 +295,6 @@ else:
                     try:
                         for idx, item in enumerate(st.session_state.carrito):
                             client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
-                            # --- LÓGICA DE COMISIÓN AJUSTADA ---
                             if met_in == "Transferencia" and not es_hist and comision_ajuste:
                                 com_bs = round(item['monto_bs'] * 0.015, 2); com_usd = round(com_bs / ts_in, 2)
                                 client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"COM-{id_m}-{idx}", str(fecha_p), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {item["ref"]}', 'COMIS. CRI OB REC', -abs(com_usd), ts_in, -abs(com_bs)))
@@ -334,14 +328,27 @@ else:
                 finally: client.close()
                 st.session_state.eg_key += 1; st.rerun()
 
-    # --- MÓDULO DIARIO ---
+    # --- MÓDULO DIARIO (FILTRADO MENSUAL) ---
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
-            st.subheader("📖 Libro Diario"); df_diario = leer_datos()
-            st.dataframe(df_diario.style.format(formatear_miles(df_diario)), use_container_width=True)
-            if not df_diario.empty:
-                csv_diario = df_diario.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button("📥 Exportar Libro Diario a Excel", data=csv_diario, file_name=f"Libro_Diario_SIMBOLO_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
+            st.subheader("📖 Libro Diario")
+            c_d1, c_d2 = st.columns(2)
+            mes_sel = c_d1.selectbox("Filtrar Mes", MESES_ANNO, index=datetime.now().month-1)
+            anno_sel = c_d2.selectbox("Año", [2025, 2026], index=1)
+            
+            df_diario_raw = leer_datos()
+            if not df_diario_raw.empty:
+                df_diario_raw['fecha_dt'] = pd.to_datetime(df_diario_raw['fecha'], errors='coerce')
+                df_mes = df_diario_raw[(df_diario_raw['fecha_dt'].dt.month == MESES_ANNO.index(mes_sel)+1) & 
+                                       (df_diario_raw['fecha_dt'].dt.year == anno_sel)]
+                
+                st.dataframe(df_mes.drop(columns=['fecha_dt']).style.format(formatear_miles(df_mes)), use_container_width=True)
+                
+                if not df_mes.empty:
+                    csv_diario = df_mes.drop(columns=['fecha_dt']).to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(f"📥 Exportar {mes_sel} {anno_sel} a Excel", data=csv_diario, file_name=f"Libro_Diario_{mes_sel}_{anno_sel}.csv", mime="text/csv")
+            else:
+                st.info("No hay movimientos registrados.")
 
     # --- MÓDULO RECIBOS ---
     if TAB_REC in m_tabs:
@@ -361,16 +368,36 @@ else:
                 qh_n = i_r['origen_destino'].iloc[0]
                 p_r = generar_recibo_multiple({'id': id_s, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
                 st.download_button(f"📄 Descargar PDF de {qh_n} ({id_s})", p_r, f"Recibo_{qh_n}_{id_s}.pdf", mime="application/pdf")
-            else:
-                st.info("No hay recibos registrados para mostrar.")
 
-    # --- MÓDULO DASHBOARDS ---
+    # --- MÓDULO DASHBOARDS (MATRIZ DE CONTROL DE CUOTAS) ---
     if TAB_DAS in m_tabs:
         with tabs[m_tabs.index(TAB_DAS)]:
-            st.subheader("📊 Finanzas"); df_r = leer_datos()
+            st.subheader("📊 Finanzas y Auditoría")
+            df_r = leer_datos()
             if not df_r.empty: st.bar_chart(df_r.groupby('tipo_operacion')['monto_usd'].apply(lambda x: abs(x.sum())))
-            st.divider(); st.subheader("📈 Cumplimiento de Asistencia")
-            df_a = leer_datos("actas"); df_as = leer_datos("asistencia"); df_u = leer_datos("usuarios")
+            
+            st.divider()
+            st.subheader("🗓️ Cuadro de Control de Pagos (Anual)")
+            st.info("Visualización rápida de solvencia por Q.H. (✅ Pagado / ❌ Pendiente)")
+            
+            df_u = leer_datos("usuarios")
+            df_p = df_r[(df_r['categoria'] == 'Capitación Mensual') & (df_r['tipo_operacion'] == 'INGRESO')]
+            
+            matriz_pagos = []
+            for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
+                qh = u_row['nombre_qh']
+                pagos_qh = " ".join(df_p[df_p['origen_destino'] == qh]['detalle'].tolist())
+                fila = {'Q.·.H.·.': qh}
+                for mes in MESES_ANNO:
+                    fila[mes] = "✅" if mes in pagos_qh else "❌"
+                matriz_pagos.append(fila)
+            
+            if matriz_pagos:
+                st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
+
+            st.divider()
+            st.subheader("📈 Cumplimiento de Asistencia")
+            df_a = leer_datos("actas"); df_as = leer_datos("asistencia")
             if not df_a.empty and not df_as.empty:
                 df_a['fecha'] = pd.to_datetime(df_a['fecha'], errors='coerce')
                 df_a['mes_anio'] = df_a['fecha'].dt.strftime('%Y-%m')
@@ -540,4 +567,3 @@ else:
                 l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in items_r.iterrows()]
                 pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
                 st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_{m_id}.pdf", mime="application/pdf")
-            else: st.info("No tienes pagos registrados en el sistema.")
