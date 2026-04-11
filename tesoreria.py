@@ -274,32 +274,17 @@ else:
                 df_m = df[(df['fecha_dt'].dt.month == MESES_ANNO.index(m_s)+1) & (df['fecha_dt'].dt.year == a_s)]
                 st.dataframe(df_m.drop(columns=['fecha_dt']).style.format(formatear_miles(df_m)), use_container_width=True)
 
-    # --- MÓDULO RECIBOS ---
-    if TAB_REC in m_tabs:
-        with tabs[m_tabs.index(TAB_REC)]:
-            st.subheader("🖨️ Reimpresión"); df_r = leer_datos(); df_r = df_r[df_r['tipo_operacion'] == 'INGRESO']
-            if not df_r.empty:
-                df_r['m_id'] = df_r['id'].apply(lambda x: x.split('-')[0]); ops = {}
-                for _, r in df_r.sort_values(by='fecha', ascending=False).iterrows():
-                    lbl = f"QH: {r['origen_destino']} | Fecha: {r['fecha']} | ID: {r['m_id']}"; ops[lbl] = r['m_id']
-                id_s = st.selectbox("Buscar Recibo", list(ops.keys())); rid = ops[id_s]
-                i_r = df_r[df_r['m_id'] == rid]; l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs'], "ref": r['referencia']} for _, r in i_r.iterrows()]
-                qh_n = i_r['origen_destino'].iloc[0]; pdf = generar_recibo_multiple({'id': rid, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
-                st.download_button(f"📄 Descargar PDF", pdf, f"Recibo_{rid}.pdf", mime="application/pdf")
-
-    # --- MÓDULO DASHBOARDS (BALANCE TRIMESTRAL Y AUDITORÍA) ---
+    # --- MÓDULO DASHBOARDS (REDISEÑADO) ---
     if TAB_DAS in m_tabs:
         with tabs[m_tabs.index(TAB_DAS)]:
             st.title("📊 Auditoría y Balances")
             df_m = leer_datos()
             
-            # --- SECCIÓN 1: BALANCE TRIMESTRAL ---
             st.subheader("🗓️ Reporte de Balance Trimestral")
             c_b1, c_b2 = st.columns(2)
             trim_sel = c_b1.selectbox("Seleccione Trimestre", ["1er Trimestre (Ene-Mar)", "2do Trimestre (Abr-Jun)", "3er Trimestre (Jul-Sep)", "4to Trimestre (Oct-Dic)"])
             año_sel = c_b2.selectbox("Año Auditoría", [2025, 2026], index=1)
             
-            # Mapeo de meses por trimestre
             meses_trim = {
                 "1er Trimestre (Ene-Mar)": [1, 2, 3],
                 "2do Trimestre (Abr-Jun)": [4, 5, 6],
@@ -311,93 +296,35 @@ else:
                 df_m['fecha_dt'] = pd.to_datetime(df_m['fecha'], errors='coerce')
                 df_trim = df_m[(df_m['fecha_dt'].dt.month.isin(meses_trim[trim_sel])) & (df_m['fecha_dt'].dt.year == año_sel)]
                 
-                # Totales
-                t_ing = df_trim[df_trim['tipo_operacion'] == 'INGRESO']['monto_bs'].sum()
-                t_egr = df_trim[df_trim['tipo_operacion'] == 'EGRESO']['monto_bs'].sum()
+                # CÁLCULO SEPARADO PARA CONCILIACIÓN
+                # Solo Banco (Lo que no es EFECTIVO)
+                df_banco = df_trim[~df_trim['referencia'].str.contains("EFECTIVO", case=False, na=False)]
+                t_ing_bs = df_banco[df_banco['tipo_operacion'] == 'INGRESO']['monto_bs'].sum()
+                t_egr_bs = df_banco[df_banco['tipo_operacion'] == 'EGRESO']['monto_bs'].sum()
+                saldo_banco_trim = t_ing_bs + t_egr_bs
                 
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("Total Ingresos (Bs)", f"{t_ing:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-                col_m2.metric("Total Egresos (Bs)", f"{abs(t_egr):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-                col_m3.metric("Resultado Periodo", f"{(t_ing + t_egr):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+                # Solo Caja Chica (Lo que es EFECTIVO)
+                df_caja = df_trim[df_trim['referencia'].str.contains("EFECTIVO", case=False, na=False)]
+                t_ing_usd = df_caja[df_caja['tipo_operacion'] == 'INGRESO']['monto_usd'].sum()
+                t_egr_usd = df_caja[df_caja['tipo_operacion'] == 'EGRESO']['monto_usd'].sum()
+                saldo_caja_trim = t_ing_usd + t_egr_usd
+
+                col_trim1, col_trim2, col_trim3 = st.columns(3)
+                col_trim1.metric("Movimiento Banco (Bs)", f"{saldo_banco_trim:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+                col_trim2.metric("Movimiento Caja (USD)", f"{saldo_caja_trim:,.2f} $")
+                col_trim3.metric("Equiv. USD Total (Tasa Actual)", f"{(saldo_banco_trim / st.session_state.tasa_actual + saldo_caja_trim):,.2f} $")
                 
-                st.write("**Detalle de Movimientos del Trimestre**")
-                st.dataframe(df_trim.drop(columns=['fecha_dt']).style.format(formatear_miles(df_trim)), use_container_width=True)
+                st.write("**Detalle Multimoneda de Movimientos**")
+                # Añadimos columna de referencia a USD para el reporte
+                df_trim_view = df_trim.copy()
+                df_trim_view['equiv_usd_al_dia'] = df_trim_view.apply(lambda x: x['monto_usd'] if x['monto_usd'] != 0 else x['monto_bs'] / x['tasa_bcv'], axis=1)
                 
-                # Exportar Balance
-                csv_balance = df_trim.drop(columns=['fecha_dt']).to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(f"📥 Exportar Balance {trim_sel} a Excel", data=csv_balance, file_name=f"Balance_{trim_sel}_{año_sel}.csv", mime="text/csv")
-            
-            st.divider()
-            st.subheader("🗓️ Cuadro de Control de Pagos (Solvencia Anual)")
-            df_u = leer_datos("usuarios"); df_p = df_m[(df_m['categoria'] == 'Capitación Mensual') & (df_m['tipo_operacion'] == 'INGRESO')]
-            matriz = []
-            for _, u in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
-                p_qh = " ".join(df_p[df_p['origen_destino'] == u['nombre_qh']]['detalle'].tolist())
-                f = {'Q.·.H.·.': u['nombre_qh']}
-                for m in MESES_ANNO: f[m] = "✅" if (m in p_qh or "AÑO COMPLETO" in p_qh) else "❌"
-                matriz.append(f)
-            st.dataframe(pd.DataFrame(matriz), use_container_width=True)
+                st.dataframe(df_trim_view.drop(columns=['fecha_dt']).style.format(formatear_miles(df_trim_view)), use_container_width=True)
+                
+                csv = df_trim_view.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(f"📥 Exportar Balance a Excel", data=csv, file_name=f"Balance_{trim_sel}.csv")
 
-    # --- MÓDULO ACTAS Y ASISTENCIA ---
-    if TAB_ACT in m_tabs:
-        with tabs[m_tabs.index(TAB_ACT)]:
-            st.subheader("📝 Libros de Actas y Asistencia"); df_actas = leer_datos("actas")
-            with st.expander("➕ Cargar Nueva Acta y Asistencia", expanded=True):
-                with st.form("f_acta", clear_on_submit=True):
-                    c1, c2 = st.columns(2); f_a = c1.date_input("Fecha Tenida"); t_a = c1.selectbox("Tipo", ["Ordinaria", "Extraordinaria", "Instalación", "Fúnebre"])
-                    g_a = c2.selectbox("Grado Tenida", GRADOS); lista_h_f = [qh for qh in lista_qh if qh not in ["CABALLERO PROFANO", "ADMINISTRADOR GENERAL"]]
-                    pres = st.multiselect("QQ.·.HH.·. Presentes", lista_h_f); bosq = st.text_area("Bosquejo / Orden del Día")
-                    if st.form_submit_button("💾 Guardar"):
-                        id_a = f"ACT-{f_a.strftime('%y%m%d')}"; client = get_client()
-                        try:
-                            client.execute("INSERT OR REPLACE INTO actas VALUES (?,?,?,?,?)", (id_a, str(f_a), t_a, bosq, g_a))
-                            client.execute("DELETE FROM asistencia WHERE id_acta=?", (id_a,))
-                            for qh in pres: client.execute("INSERT INTO asistencia (id_acta, nombre_qh, asistio) VALUES (?,?,?)", (id_a, qh, 1))
-                        finally: client.close(); st.rerun()
-
-    # --- MÓDULO HOSPITALARIO ---
-    if TAB_HOS in m_tabs:
-        with tabs[m_tabs.index(TAB_HOS)]:
-            st.subheader("❤️ Tronco de la Viuda"); col_ing_h, col_egr_h = st.columns(2)
-            with col_ing_h:
-                with st.expander("➕ Ingreso (Óbolo)", expanded=True):
-                    with st.form("f_hosp_ing", clear_on_submit=True):
-                        f_h_i = st.date_input("Fecha", datetime.now()); det_h_i = st.text_input("Detalle"); m_u_h_i = st.number_input("USD", min_value=0.0); m_b_h_i = st.number_input("Bs", min_value=0.0)
-                        if st.form_submit_button("💾 Guardar"):
-                            client = get_client()
-                            try: client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_i), f"INGRESO: {det_h_i}", m_u_h_i, st.session_state.tasa_actual, m_b_h_i))
-                            finally: client.close(); st.rerun()
-            with col_egr_h:
-                with st.expander("📤 Egreso (Ayuda)", expanded=True):
-                    with st.form("f_hosp_egr", clear_on_submit=True):
-                        f_h_e = st.date_input("Fecha", datetime.now()); det_h_e = st.text_input("Beneficiario"); m_u_h_e = st.number_input("USD", min_value=0.0); m_b_h_e = st.number_input("Bs", min_value=0.0)
-                        if st.form_submit_button("💾 Guardar Ayuda"):
-                            client = get_client()
-                            try: client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_e), f"EGRESO: {det_h_e}", -abs(m_u_h_e), st.session_state.tasa_actual, -abs(m_b_h_e)))
-                            finally: client.close(); st.rerun()
-            df_h = leer_datos("hospitalario"); st.dataframe(df_h.style.format(formatear_miles(df_h)), use_container_width=True)
-
-    # --- MÓDULO USUARIOS ---
-    if TAB_USU in m_tabs:
-        with tabs[m_tabs.index(TAB_USU)]:
-            st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios"); st.dataframe(df_u[['username', 'nombre_qh', 'grado', 'cargo_logia', 'rol']], use_container_width=True)
-            c_u1, c_u2 = st.columns(2)
-            with c_u1:
-                with st.form("crear_u", clear_on_submit=True):
-                    nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password"); nn = st.text_input("Nombre"); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
-                    if st.form_submit_button("Guardar"):
-                        client = get_client()
-                        try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn, ng, nr, 0, 0, nc))
-                        finally: client.close(); st.rerun()
-            with c_u2:
-                with st.form("mod_p", clear_on_submit=True):
-                    u_s = st.selectbox("Cambiar Clave de:", df_u['username'].tolist()); n_p = st.text_input("Nueva Clave", type="password")
-                    if st.form_submit_button("Actualizar Clave"):
-                        client = get_client()
-                        try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
-                        finally: client.close(); st.success("Clave actualizada")
-
-    # --- MÓDULO CONFIGURACIÓN ---
+    # --- MÓDULO CONFIGURACIÓN (RESTAURADO) ---
     if TAB_CON in m_tabs:
         with tabs[m_tabs.index(TAB_CON)]:
             st.subheader("⚙️ Configuración")
@@ -409,11 +336,17 @@ else:
                     if not str(r['id']).startswith("COM-"):
                         lbl = f"QH: {r['origen_destino']} | Monto: {r['monto_bs']:,.2f} Bs | Fecha: {r['fecha']} | ID: {r['id']}"; ops[lbl] = r['id']
                 id_anul = st.selectbox("Seleccione para ANULAR", list(ops.keys()))
-                if st.button("❌ ANULAR MOVIMIENTO SELECCIONADO", type="primary"):
+                if st.button("❌ ANULAR SELECCIONADO", type="primary"):
                     client = get_client(); rid = ops[id_anul]
                     try: 
                         client.execute("DELETE FROM movimientos WHERE id=?", (rid,))
                         client.execute("DELETE FROM movimientos WHERE id LIKE ?", (f"COM-{rid}%",))
                         st.success("Anulado."); st.rerun()
                     finally: client.close()
-            st.divider(); st.error("🚨 ZONA DE PELIGRO"); (st.checkbox("Confirmo borrar TODO") and st.button("VACIAR BD") and logout())
+            st.divider(); st.error("🚨 ZONA DE PELIGRO")
+            if st.checkbox("Confirmo borrar TODO"):
+                if st.button("VACIAR BD"):
+                    client = get_client()
+                    try: 
+                        for t in ["movimientos", "actas", "asistencia", "hospitalario"]: client.execute(f"DELETE FROM {t}")
+                    finally: client.close(); logout()
