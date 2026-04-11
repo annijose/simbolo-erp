@@ -328,27 +328,22 @@ else:
                 finally: client.close()
                 st.session_state.eg_key += 1; st.rerun()
 
-    # --- MÓDULO DIARIO (FILTRADO MENSUAL) ---
+    # --- MÓDULO DIARIO ---
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
             st.subheader("📖 Libro Diario")
             c_d1, c_d2 = st.columns(2)
             mes_sel = c_d1.selectbox("Filtrar Mes", MESES_ANNO, index=datetime.now().month-1)
             anno_sel = c_d2.selectbox("Año", [2025, 2026], index=1)
-            
             df_diario_raw = leer_datos()
             if not df_diario_raw.empty:
                 df_diario_raw['fecha_dt'] = pd.to_datetime(df_diario_raw['fecha'], errors='coerce')
-                df_mes = df_diario_raw[(df_diario_raw['fecha_dt'].dt.month == MESES_ANNO.index(mes_sel)+1) & 
-                                       (df_diario_raw['fecha_dt'].dt.year == anno_sel)]
-                
+                df_mes = df_diario_raw[(df_diario_raw['fecha_dt'].dt.month == MESES_ANNO.index(mes_sel)+1) & (df_diario_raw['fecha_dt'].dt.year == anno_sel)]
                 st.dataframe(df_mes.drop(columns=['fecha_dt']).style.format(formatear_miles(df_mes)), use_container_width=True)
-                
                 if not df_mes.empty:
                     csv_diario = df_mes.drop(columns=['fecha_dt']).to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(f"📥 Exportar {mes_sel} {anno_sel} a Excel", data=csv_diario, file_name=f"Libro_Diario_{mes_sel}_{anno_sel}.csv", mime="text/csv")
-            else:
-                st.info("No hay movimientos registrados.")
+            else: st.info("No hay movimientos registrados.")
 
     # --- MÓDULO RECIBOS ---
     if TAB_REC in m_tabs:
@@ -369,34 +364,26 @@ else:
                 p_r = generar_recibo_multiple({'id': id_s, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
                 st.download_button(f"📄 Descargar PDF de {qh_n} ({id_s})", p_r, f"Recibo_{qh_n}_{id_s}.pdf", mime="application/pdf")
 
-    # --- MÓDULO DASHBOARDS (MATRIZ DE CONTROL DE CUOTAS) ---
+    # --- MÓDULO DASHBOARDS ---
     if TAB_DAS in m_tabs:
         with tabs[m_tabs.index(TAB_DAS)]:
             st.subheader("📊 Finanzas y Auditoría")
             df_r = leer_datos()
             if not df_r.empty: st.bar_chart(df_r.groupby('tipo_operacion')['monto_usd'].apply(lambda x: abs(x.sum())))
-            
-            st.divider()
-            st.subheader("🗓️ Cuadro de Control de Pagos (Anual)")
-            st.info("Visualización rápida de solvencia por Q.H. (✅ Pagado / ❌ Pendiente)")
-            
-            df_u = leer_datos("usuarios")
-            df_p = df_r[(df_r['categoria'] == 'Capitación Mensual') & (df_r['tipo_operacion'] == 'INGRESO')]
-            
+            st.divider(); st.subheader("🗓️ Cuadro de Control de Pagos (Anual)")
+            df_u = leer_datos("usuarios"); df_p = df_r[(df_r['categoria'] == 'Capitación Mensual') & (df_r['tipo_operacion'] == 'INGRESO')]
             matriz_pagos = []
             for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
                 qh = u_row['nombre_qh']
                 pagos_qh = " ".join(df_p[df_p['origen_destino'] == qh]['detalle'].tolist())
                 fila = {'Q.·.H.·.': qh}
+                # --- AJUSTE LÓGICA PRONTO PAGO EN DASHBOARD ---
+                es_solvente_total = "AÑO COMPLETO" in pagos_qh
                 for mes in MESES_ANNO:
-                    fila[mes] = "✅" if mes in pagos_qh else "❌"
+                    fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
                 matriz_pagos.append(fila)
-            
-            if matriz_pagos:
-                st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
-
-            st.divider()
-            st.subheader("📈 Cumplimiento de Asistencia")
+            if matriz_pagos: st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
+            st.divider(); st.subheader("📈 Cumplimiento de Asistencia")
             df_a = leer_datos("actas"); df_as = leer_datos("asistencia")
             if not df_a.empty and not df_as.empty:
                 df_a['fecha'] = pd.to_datetime(df_a['fecha'], errors='coerce')
@@ -504,7 +491,7 @@ else:
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
                             finally: client.close()
-                            st.rerun()
+                            st.success("Perfil actualizado."); st.rerun()
             with c_u3:
                 with st.expander("🔐 Clave"):
                     with st.form("mod_p", clear_on_submit=True):
@@ -545,8 +532,9 @@ else:
             df_all = leer_datos()
             mis_pagos = df_all[(df_all['origen_destino'] == info['nombre']) & (df_all['categoria'] == 'Capitación Mensual')]
             m_pagados = " ".join(mis_pagos['detalle'].tolist())
+            es_solvente_total = "AÑO COMPLETO" in m_pagados
             m_idx = datetime.now().month
-            m_pend = [m for m in MESES_ANNO[:m_idx] if m not in m_pagados]
+            m_pend = [] if es_solvente_total else [m for m in MESES_ANNO[:m_idx] if m not in m_pagados]
             st.divider()
             if not m_pend: st.success("✨ ¡ESTÁS A PLOMO!")
             else: st.error(f"⚠️ Meses pendientes: {', '.join(m_pend)}")
