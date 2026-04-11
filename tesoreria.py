@@ -138,7 +138,6 @@ def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_us
     df_egresos = df_trim[df_trim['tipo_operacion'] == 'EGRESO'].copy()
     if not df_egresos.empty:
         df_egresos['equiv_bs'] = df_egresos.apply(lambda x: abs(x['monto_bs']) if x['monto_bs'] != 0 else abs(x['monto_usd'] * x['tasa_bcv']), axis=1)
-        # Excluimos "Comisión Bancaria" si queremos ver el gasto real, o lo dejamos. Lo dejamos para auditar todo.
         gasto_mayor = df_egresos.groupby('categoria')['equiv_bs'].sum().idxmax()
         monto_mayor = df_egresos.groupby('categoria')['equiv_bs'].sum().max()
         analisis += f"📊 **Foco de Gastos:** El mayor desembolso de fondos de la Logia este trimestre fue destinado a la categoría **'{gasto_mayor}'** (Aprox. {monto_mayor:,.2f} Bs.).\n"
@@ -258,11 +257,12 @@ if "logged_in" not in st.session_state:
 else:
     info = st.session_state["u_info"]; lista_qh, dict_grados = obtener_miembros()
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
-    tratamiento = "V.·.H.·." if info['grado'] in ['Maestro Mason', 'Past Master'] else "Q.·.H.·."
+    # Corrección clave aquí: se restaura el nombre completo de la variable
+    tratamiento_masonico = "V.·.H.·." if info['grado'] in ['Maestro Mason', 'Past Master'] else "Q.·.H.·."
     
     with st.sidebar:
         st.title("🏛️ S.I.M.B.O.L.O.")
-        st.write(f"{tratamiento} **{info['nombre']}**")
+        st.write(f"{tratamiento_masonico} **{info['nombre']}**")
         if st.button("🚪 Cerrar Sesión", type="primary"): logout()
         if info['teso']:
             st.divider(); st.header("📊 Resumen de Caja")
@@ -438,7 +438,6 @@ else:
                 t_egr_usd = df_caja[df_caja['tipo_operacion'] == 'EGRESO']['monto_usd'].sum()
                 saldo_caja_trim = t_ing_usd + t_egr_usd
 
-                # --- NUEVO: MOTOR DE INTELIGENCIA FINANCIERA ---
                 with st.expander("🤖 Análisis de Inteligencia Financiera", expanded=True):
                     st.markdown(generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd))
 
