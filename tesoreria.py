@@ -164,6 +164,17 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     nombre_completo = f"{grado_qh} {datos_master['qh']}" if grado_qh != "Profano" else datos_master['qh']
     pdf.cell(40, 8, "Recibido de:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {nombre_completo}"), 1, 1)
     pdf.set_font('Arial', 'B', 10); pdf.cell(40, 8, "Fecha / Ref:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {datos_master['fecha']} / {datos_master['ref']}"), 1, 1); pdf.ln(5)
+    
+    # Nota de Registro Histórico
+    es_historico = any("HISTÓRICA" in str(item.get('ref', '')) for item in items_carrito)
+    if es_historico:
+        pdf.set_text_color(200, 0, 0)
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(0, 8, texto_seguro("NOTA: ESTE ES UN REGISTRO HISTÓRICO DE MIGRACIÓN."), ln=True, align='L')
+        pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta la fecha de este registro."), ln=True, align='L')
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
+
     pdf.set_font('Arial', 'B', 9); pdf.set_fill_color(230, 230, 230); pdf.cell(80, 7, "Concepto", 1, 0, 'C', True); pdf.cell(50, 7, "Monto USD", 1, 0, 'C', True); pdf.cell(50, 7, "Monto Bs.", 1, 1, 'C', True)
     pdf.set_font('Arial', '', 9)
     for item in items_carrito:
@@ -328,7 +339,7 @@ else:
                 finally: client.close()
                 st.session_state.eg_key += 1; st.rerun()
 
-    # --- MÓDULO DIARIO ---
+    # --- MÓDULO DIARIO (FILTRADO MENSUAL) ---
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
             st.subheader("📖 Libro Diario")
@@ -359,7 +370,7 @@ else:
                 seleccion_label = st.selectbox("Seleccione el recibo para reimprimir", list(opciones_recibos.keys()))
                 id_s = opciones_recibos[seleccion_label]
                 i_r = df_rec_raw[df_rec_raw['m_id'] == id_s]
-                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in i_r.iterrows()]
+                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs'], "ref": r['referencia']} for _, r in i_r.iterrows()]
                 qh_n = i_r['origen_destino'].iloc[0]
                 p_r = generar_recibo_multiple({'id': id_s, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
                 st.download_button(f"📄 Descargar PDF de {qh_n} ({id_s})", p_r, f"Recibo_{qh_n}_{id_s}.pdf", mime="application/pdf")
@@ -377,7 +388,6 @@ else:
                 qh = u_row['nombre_qh']
                 pagos_qh = " ".join(df_p[df_p['origen_destino'] == qh]['detalle'].tolist())
                 fila = {'Q.·.H.·.': qh}
-                # --- AJUSTE LÓGICA PRONTO PAGO EN DASHBOARD ---
                 es_solvente_total = "AÑO COMPLETO" in pagos_qh
                 for mes in MESES_ANNO:
                     fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
@@ -552,6 +562,6 @@ else:
                 seleccion_mre = st.selectbox("Seleccione Recibo para descargar", list(opciones_propias.keys()))
                 m_id = opciones_propias[seleccion_mre]
                 items_r = mis_mov_raw[mis_mov_raw['m_id'] == m_id]
-                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs']} for _, r in items_r.iterrows()]
+                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs'], "ref": r['referencia']} for _, r in items_r.iterrows()]
                 pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
                 st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_{m_id}.pdf", mime="application/pdf")
