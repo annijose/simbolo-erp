@@ -46,20 +46,13 @@ def get_client():
 def init_db():
     client = get_client()
     try:
-        client.execute('''CREATE TABLE IF NOT EXISTS movimientos 
-                     (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, 
-                      categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                     (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS actas 
-                     (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS asistencia 
-                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
-        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario 
-                     (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS movimientos (id TEXT PRIMARY KEY, fecha TEXT, origen_destino TEXT, tipo_operacion TEXT, categoria TEXT, detalle TEXT, referencia TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT, nombre_qh TEXT, grado TEXT, rol TEXT, perm_tesoreria INTEGER, perm_secretaria INTEGER, cargo_logia TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS actas (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno')")
-        
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?, '113', 'Annijosé Goitia', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero')", (usr_anni,))
     finally:
@@ -154,7 +147,6 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     if meses_en_este_pago:
         meses_ordenados = [m for m in MESES_ANNO if m in meses_en_este_pago]
         mes_limite = meses_ordenados[-1]
-        
         primer_mes_pago_idx = MESES_ANNO.index(meses_ordenados[0])
         meses_que_deberian_estar_pagos = MESES_ANNO[:primer_mes_pago_idx]
         
@@ -167,15 +159,13 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
             client.close()
 
         if es_historico:
-            pdf.set_text_color(180, 0, 0)
-            pdf.set_font('Arial', 'B', 10)
+            pdf.set_text_color(180, 0, 0); pdf.set_font('Arial', 'B', 10)
             pdf.cell(0, 8, texto_seguro("NOTA: ESTE ES UN REGISTRO HISTÓRICO DE MIGRACIÓN."), ln=True, align='L')
             if faltan_meses_previos and "AÑO COMPLETO" not in str(items_carrito):
                 pdf.cell(0, 8, texto_seguro(f"AVISO: Existen meses anteriores pendientes en el historial."), ln=True, align='L')
             else:
                 pdf.cell(0, 8, texto_seguro(f"El Q.·.H.·. se encuentra A PLOMO hasta el mes de {mes_limite}."), ln=True, align='L')
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(2)
+            pdf.set_text_color(0, 0, 0); pdf.ln(2)
 
     pdf.set_font('Arial', 'B', 9); pdf.set_fill_color(230, 230, 230); pdf.cell(80, 7, "Concepto", 1, 0, 'C', True); pdf.cell(50, 7, "Monto USD", 1, 0, 'C', True); pdf.cell(50, 7, "Monto Bs.", 1, 1, 'C', True)
     pdf.set_font('Arial', '', 9)
@@ -187,8 +177,28 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     if os.path.exists("sello.png"): pdf.image("sello.png", x=40, y=y_actual, w=35)
     if os.path.exists("firma.png"): pdf.image("firma.png", x=140, y=y_actual, w=35)
     pdf.ln(35)
-    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, texto_seguro("Annijosé Goitia León"), ln=True, align='R')
-    pdf.set_font('Arial', 'I', 9); pdf.cell(0, 5, "Tesorero", ln=True, align='R')
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, texto_seguro("Annijosé Goitia León"), ln=True, align='R'); pdf.set_font('Arial', 'I', 9); pdf.cell(0, 5, "Tesorero", ln=True, align='R')
+    salida = pdf.output(dest='S')
+    return salida.encode('latin-1', 'replace') if isinstance(salida, str) else bytes(salida)
+
+def generar_pdf_acta(d, presentes):
+    pdf = FormatoPDF(); pdf.add_page()
+    pdf.set_font('Arial', 'B', 14); pdf.cell(0, 10, texto_seguro(f"ACTA DE TENIDA - {d['id_acta']}"), ln=True, align='C'); pdf.ln(5)
+    pdf.set_font('Arial', 'B', 10); pdf.cell(40, 8, "Fecha:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, f" {d['fecha']}", 1, 1)
+    grado = d.get('grado_tenida', 'Aprendiz')
+    pdf.set_font('Arial', 'B', 10); pdf.cell(40, 8, "Tenida:", 1); pdf.set_font('Arial', '', 10); pdf.cell(0, 8, texto_seguro(f" {d.get('tipo_tenida','')} en Grado de {grado}"), 1, 1); pdf.ln(5)
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, "Resumen / Bosquejo:", ln=True)
+    pdf.set_font('Arial', '', 10); pdf.multi_cell(0, 8, texto_seguro(d['bosquejo']), border=1); pdf.ln(5)
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 8, texto_seguro("QQ.·.HH.·. Presentes:"), ln=True)
+    pdf.set_font('Arial', '', 9)
+    if presentes:
+        nombres_str = ", ".join(presentes)
+        pdf.multi_cell(0, 6, texto_seguro(nombres_str), border=1)
+    else:
+        pdf.cell(0, 8, "(No se ha registrado asistencia en el sistema para esta tenida)", border=1, ln=True)
+    pdf.ln(20)
+    pdf.cell(60, 10, "____________________", 0, 0, 'C'); pdf.cell(60, 10, "____________________", 0, 0, 'C'); pdf.cell(60, 10, "____________________", 0, 1, 'C')
+    pdf.set_font('Arial', 'B', 8); pdf.cell(60, 5, "Venerable Maestro", 0, 0, 'C'); pdf.cell(60, 5, "Orador Fiscal", 0, 0, 'C'); pdf.cell(60, 5, "Secretario", 0, 1, 'C')
     salida = pdf.output(dest='S')
     return salida.encode('latin-1', 'replace') if isinstance(salida, str) else bytes(salida)
 
@@ -233,8 +243,7 @@ else:
                     try:
                         client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-BS', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, t_si, n_bs))
                         client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-USD', str(f_si), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Caja', 'EFECTIVO', n_usd, t_si, n_usd*t_si))
-                    finally: client.close()
-                    st.rerun()
+                    finally: client.close(); st.rerun()
             else: st.success("✅ Saldo Inicial Bloqueado")
             b_bs = df_actual[~df_actual['referencia'].str.contains("EFECTIVO", case=False, na=False)]['monto_bs'].sum()
             c_usd = df_actual[df_actual['referencia'].str.contains("EFECTIVO", case=False, na=False)]['monto_usd'].sum()
@@ -251,8 +260,7 @@ else:
                 if st.button("💾 Guardar SI Hosp"):
                     client = get_client()
                     try: client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, 'SALDO INICIAL', ?, ?, ?)", (str(f_si_h), n_usd_h, st.session_state.tasa_actual, n_bs_h))
-                    finally: client.close()
-                    st.rerun()
+                    finally: client.close(); st.rerun()
             tot_usd_h = df_hosp_all['monto_usd'].sum(); tot_bs_h = df_hosp_all['monto_bs'].sum()
             st.metric("Fondo Hosp (USD)", f"{tot_usd_h:,.2f} $".replace(',', 'X').replace('.', ',').replace('X', '.'))
             st.metric("Fondo Hosp (Bs)", f"{tot_bs_h:,.2f} Bs.".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -265,7 +273,7 @@ else:
     if info['rol'] == 'Administrador': m_tabs += [TAB_USU, TAB_CON]
     tabs = st.tabs(m_tabs)
 
-    # --- MÓDULO INGRESOS ---
+    # --- INGRESOS ---
     if TAB_ING in m_tabs:
         with tabs[m_tabs.index(TAB_ING)]:
             if 'carrito' not in st.session_state: st.session_state.carrito = []
@@ -278,7 +286,7 @@ else:
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
             comision_ajuste = False
             if met_in == "Transferencia":
-                comision_ajuste = st.checkbox("¿Es transferencia desde OTRO BANCO? (Aplica 1.5%)", value=True, key=f"com_{st.session_state.f_key}")
+                comision_ajuste = st.checkbox("¿Aplica Comisión 1.5%? (Otro banco)", value=True, key=f"com_{st.session_state.f_key}")
             es_hist = c_g3.checkbox("Registro Histórico ($0 en caja)", key=f"hist_{st.session_state.f_key}")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
             with st.expander("➕ Añadir Concepto", expanded=True):
@@ -294,8 +302,7 @@ else:
                 if es_hist: m_t_f, m_b_f, r_f = 0.0, 0.0, "MIGRACIÓN HISTÓRICA"
                 else: m_t_f, m_b_f, r_f = m_t, round(m_t * ts_in, 2), "EFECTIVO" if met_in == "Efectivo USD" else ref_t_input
                 if c_i3.button("➕ Añadir"):
-                    st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_f, "monto_bs": m_b_f, "ref": r_f})
-                    st.rerun()
+                    st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_f, "monto_bs": m_b_f, "ref": r_f}); st.rerun()
             if st.session_state.carrito:
                 for i, it in enumerate(st.session_state.carrito):
                     cols = st.columns([4,1,1,0.5]); cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
@@ -315,7 +322,7 @@ else:
                 st.download_button("📥 Descargar PDF", st.session_state.u_recibo['bytes'], st.session_state.u_recibo['n'], mime="application/pdf", use_container_width=True)
                 if st.button("🔄 Nuevo Cobro"): st.session_state.u_recibo = None; st.rerun()
 
-    # --- MÓDULO EGRESOS ---
+    # --- EGRESOS ---
     if TAB_EGR in m_tabs:
         with tabs[m_tabs.index(TAB_EGR)]:
             if 'eg_key' not in st.session_state: st.session_state.eg_key = 0
@@ -332,20 +339,16 @@ else:
                 m_b_e = c_e2.number_input("Bs", key=f"ebs_{st.session_state.eg_key}"); m_u_e = round(m_b_e / t_e, 2); r_e = c_e2.text_input("Referencia", key=f"er_{st.session_state.eg_key}")
             nota_e = c_e2.text_input("Nota", key=f"en_{st.session_state.eg_key}")
             if st.button("Registrar Salida", type="primary"):
-                id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"
-                client = get_client()
+                id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"; client = get_client()
                 try: client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (id_e, str(f_e), ben_e, "EGRESO", cat_e, nota_e, r_e, -abs(m_u_e), t_e, -abs(m_b_e)))
-                finally: client.close()
-                st.session_state.eg_key += 1; st.rerun()
+                finally: client.close(); st.session_state.eg_key += 1; st.rerun()
 
-    # --- MÓDULO DIARIO ---
+    # --- DIARIO ---
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
-            st.subheader("📖 Libro Diario")
+            st.subheader("📖 Libro Diario"); df_diario_raw = leer_datos()
             c_d1, c_d2 = st.columns(2)
-            mes_sel = c_d1.selectbox("Filtrar Mes", MESES_ANNO, index=datetime.now().month-1)
-            anno_sel = c_d2.selectbox("Año", [2025, 2026], index=1)
-            df_diario_raw = leer_datos()
+            mes_sel = c_d1.selectbox("Filtrar Mes", MESES_ANNO, index=datetime.now().month-1); anno_sel = c_d2.selectbox("Año", [2025, 2026], index=1)
             if not df_diario_raw.empty:
                 df_diario_raw['fecha_dt'] = pd.to_datetime(df_diario_raw['fecha'], errors='coerce')
                 df_mes = df_diario_raw[(df_diario_raw['fecha_dt'].dt.month == MESES_ANNO.index(mes_sel)+1) & (df_diario_raw['fecha_dt'].dt.year == anno_sel)]
@@ -353,19 +356,16 @@ else:
                 if not df_mes.empty:
                     csv_diario = df_mes.drop(columns=['fecha_dt']).to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(f"📥 Exportar {mes_sel} {anno_sel} a Excel", data=csv_diario, file_name=f"Libro_Diario_{mes_sel}_{anno_sel}.csv", mime="text/csv")
-            else: st.info("No hay movimientos registrados.")
 
-    # --- MÓDULO RECIBOS ---
+    # --- RECIBOS ---
     if TAB_REC in m_tabs:
         with tabs[m_tabs.index(TAB_REC)]:
-            st.subheader("🖨️ Reimpresión de Recibos")
-            df_rec_raw = leer_datos(); df_rec_raw = df_rec_raw[df_rec_raw['tipo_operacion'] == 'INGRESO']
+            st.subheader("🖨️ Reimpresión de Recibos"); df_rec_raw = leer_datos(); df_rec_raw = df_rec_raw[df_rec_raw['tipo_operacion'] == 'INGRESO']
             if not df_rec_raw.empty:
                 df_rec_raw['m_id'] = df_rec_raw['id'].apply(lambda x: x.split('-')[0])
                 opciones_recibos = {}
                 for _, r in df_rec_raw.sort_values(by='fecha', ascending=False).iterrows():
-                    label = f"QH: {r['origen_destino']} | Fecha: {r['fecha']} | ID: {r['m_id']}"
-                    opciones_recibos[label] = r['m_id']
+                    label = f"QH: {r['origen_destino']} | Fecha: {r['fecha']} | ID: {r['m_id']}"; opciones_recibos[label] = r['m_id']
                 seleccion_label = st.selectbox("Seleccione el recibo para reimprimir", list(opciones_recibos.keys()))
                 id_s = opciones_recibos[seleccion_label]
                 i_r = df_rec_raw[df_rec_raw['m_id'] == id_s]
@@ -373,27 +373,19 @@ else:
                 qh_n = i_r['origen_destino'].iloc[0]
                 p_r = generar_recibo_multiple({'id': id_s, 'fecha': i_r['fecha'].iloc[0], 'qh': qh_n, 'monto_usd': i_r['monto_usd'].sum(), 'monto_bs': i_r['monto_bs'].sum(), 'ref': i_r['referencia'].iloc[0]}, l_i, dict_grados.get(qh_n, ""))
                 st.download_button(f"📄 Descargar PDF de {qh_n} ({id_s})", p_r, f"Recibo_{qh_n}_{id_s}.pdf", mime="application/pdf")
-            else:
-                st.info("No hay recibos registrados para mostrar.")
 
-    # --- MÓDULO DASHBOARDS (UNIFICADO) ---
+    # --- DASHBOARDS ---
     if TAB_DAS in m_tabs:
         with tabs[m_tabs.index(TAB_DAS)]:
             st.title("📊 Auditoría y Balances")
             df_m = leer_datos()
             
-            # --- 1. BALANCE TRIMESTRAL ---
             st.subheader("🗓️ Reporte de Balance Trimestral")
             c_b1, c_b2 = st.columns(2)
             trim_sel = c_b1.selectbox("Seleccione Trimestre", ["1er Trimestre (Ene-Mar)", "2do Trimestre (Abr-Jun)", "3er Trimestre (Jul-Sep)", "4to Trimestre (Oct-Dic)"], index=1)
             año_sel = c_b2.selectbox("Año Auditoría", [2025, 2026], index=1)
             
-            meses_trim = {
-                "1er Trimestre (Ene-Mar)": [1, 2, 3],
-                "2do Trimestre (Abr-Jun)": [4, 5, 6],
-                "3er Trimestre (Jul-Sep)": [7, 8, 9],
-                "4to Trimestre (Oct-Dic)": [10, 11, 12]
-            }
+            meses_trim = {"1er Trimestre (Ene-Mar)": [1, 2, 3], "2do Trimestre (Abr-Jun)": [4, 5, 6], "3er Trimestre (Jul-Sep)": [7, 8, 9], "4to Trimestre (Oct-Dic)": [10, 11, 12]}
             
             if not df_m.empty:
                 df_m['fecha_dt'] = pd.to_datetime(df_m['fecha'], errors='coerce')
@@ -418,41 +410,31 @@ else:
                 df_trim_view = df_trim.copy()
                 df_trim_view['equiv_usd_al_dia'] = df_trim_view.apply(lambda x: x['monto_usd'] if x['monto_usd'] != 0 else x['monto_bs'] / x['tasa_bcv'], axis=1)
                 st.dataframe(df_trim_view.drop(columns=['fecha_dt']).style.format(formatear_miles(df_trim_view)), use_container_width=True)
-                
                 csv = df_trim_view.to_csv(index=False, encoding='utf-8-sig')
                 st.download_button(f"📥 Exportar Balance a Excel", data=csv, file_name=f"Balance_{trim_sel}.csv")
 
-            # --- 2. REPORTES RÁPIDOS REALES ---
-            st.divider()
-            st.subheader("⚡ Reportes Rápidos (Movimientos Reales)")
+            st.divider(); st.subheader("⚡ Reportes Rápidos (Movimientos Reales)")
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 st.write("**📥 Ingresos**")
-                df_ing_real = df_m[(df_m['tipo_operacion'] == 'INGRESO') & (df_m['monto_bs'] > 0) | (df_m['monto_usd'] > 0)]
-                st.dataframe(df_ing_real[['fecha', 'origen_destino', 'categoria', 'monto_usd', 'monto_bs', 'referencia']].style.format(formatear_miles(df_ing_real)), use_container_width=True)
+                df_ing_real = df_m[(df_m['tipo_operacion'] == 'INGRESO') & ((df_m['monto_bs'] > 0) | (df_m['monto_usd'] > 0))]
+                if not df_ing_real.empty: st.dataframe(df_ing_real[['fecha', 'origen_destino', 'categoria', 'monto_usd', 'monto_bs', 'referencia']].style.format(formatear_miles(df_ing_real)), use_container_width=True)
             with col_d2:
                 st.write("**📤 Egresos**")
                 df_egr_real = df_m[df_m['tipo_operacion'] == 'EGRESO']
-                st.dataframe(df_egr_real[['fecha', 'origen_destino', 'categoria', 'monto_usd', 'monto_bs', 'referencia']].style.format(formatear_miles(df_egr_real)), use_container_width=True)
+                if not df_egr_real.empty: st.dataframe(df_egr_real[['fecha', 'origen_destino', 'categoria', 'monto_usd', 'monto_bs', 'referencia']].style.format(formatear_miles(df_egr_real)), use_container_width=True)
 
-            # --- 3. CUADRO DE CONTROL DE PAGOS ---
-            st.divider()
-            st.subheader("🗓️ Cuadro de Control de Pagos (Solvencia Anual)")
+            st.divider(); st.subheader("🗓️ Cuadro de Control de Pagos (Solvencia Anual)")
             df_u = leer_datos("usuarios"); df_p = df_m[(df_m['categoria'] == 'Capitación Mensual') & (df_m['tipo_operacion'] == 'INGRESO')]
             matriz_pagos = []
             for _, u_row in df_u[~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL'])].iterrows():
-                qh = u_row['nombre_qh']
-                pagos_qh = " ".join(df_p[df_p['origen_destino'] == qh]['detalle'].tolist())
-                fila = {'Q.·.H.·.': qh}
+                qh = u_row['nombre_qh']; pagos_qh = " ".join(df_p[df_p['origen_destino'] == qh]['detalle'].tolist()); fila = {'Q.·.H.·.': qh}
                 es_solvente_total = "AÑO COMPLETO" in pagos_qh
-                for mes in MESES_ANNO:
-                    fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
+                for mes in MESES_ANNO: fila[mes] = "✅" if (mes in pagos_qh or es_solvente_total) else "❌"
                 matriz_pagos.append(fila)
             if matriz_pagos: st.dataframe(pd.DataFrame(matriz_pagos), use_container_width=True)
             
-            # --- 4. CUMPLIMIENTO DE ASISTENCIA ---
-            st.divider()
-            st.subheader("📈 Cumplimiento de Asistencia")
+            st.divider(); st.subheader("📈 Cumplimiento de Asistencia")
             df_a = leer_datos("actas"); df_as = leer_datos("asistencia")
             if not df_a.empty and not df_as.empty:
                 df_a['fecha'] = pd.to_datetime(df_a['fecha'], errors='coerce')
@@ -472,69 +454,57 @@ else:
                     res_asis.append({'Q.·.H.·.': qh, 'Grado': grado, 'Asist. Reales': asis_t, 'Asist. Requeridas': req_t, '% Cumplimiento': min(100.0, cumpl)})
                 if res_asis: st.dataframe(pd.DataFrame(res_asis).style.format({'% Cumplimiento': '{:.1f}%'}), use_container_width=True)
 
-    # --- MÓDULO ACTAS Y ASISTENCIA ---
+    # --- ACTAS Y ASISTENCIA ---
     if TAB_ACT in m_tabs:
         with tabs[m_tabs.index(TAB_ACT)]:
             st.subheader("📝 Libros de Actas y Asistencia"); df_actas = leer_datos("actas")
             with st.expander("➕ Cargar Nueva Acta y Asistencia", expanded=True):
                 with st.form("f_acta", clear_on_submit=True):
-                    c1, c2 = st.columns(2)
-                    f_a = c1.date_input("Fecha Tenida")
-                    t_a = c1.selectbox("Tipo", ["Ordinaria", "Extraordinaria", "Instalación", "Fúnebre"])
+                    c1, c2 = st.columns(2); f_a = c1.date_input("Fecha Tenida"); t_a = c1.selectbox("Tipo", ["Ordinaria", "Extraordinaria", "Instalación", "Fúnebre"])
                     g_a = c2.selectbox("Grado Tenida", GRADOS)
                     lista_h_f = [qh for qh in lista_qh if qh not in ["CABALLERO PROFANO", "ADMINISTRADOR GENERAL"]]
-                    pres = st.multiselect("QQ.·.HH.·. Presentes", lista_h_f)
-                    bosq = st.text_area("Bosquejo / Orden del Día")
+                    pres = st.multiselect("QQ.·.HH.·. Presentes", lista_h_f); bosq = st.text_area("Bosquejo / Orden del Día")
                     if st.form_submit_button("💾 Guardar Acta"):
                         id_a = f"ACT-{f_a.strftime('%y%m%d')}"; client = get_client()
                         try:
                             client.execute("INSERT OR REPLACE INTO actas VALUES (?,?,?,?,?)", (id_a, str(f_a), t_a, bosq, g_a))
                             client.execute("DELETE FROM asistencia WHERE id_acta=?", (id_a,))
                             for qh in pres: client.execute("INSERT INTO asistencia (id_acta, nombre_qh, asistio) VALUES (?,?,?)", (id_a, qh, 1))
-                        finally: client.close()
-                        st.rerun()
+                        finally: client.close(); st.rerun()
             if not df_actas.empty:
                 id_sel = st.selectbox("Imprimir Acta", df_actas['id_acta'].tolist())
                 if st.button("Generar PDF Acta"):
                     acta_r = df_actas[df_actas['id_acta'] == id_sel].iloc[0]
-                    res_as = leer_datos("asistencia")
-                    list_pres = res_as[(res_as['id_acta'] == id_sel) & (res_as['asistio'] == 1)]['nombre_qh'].tolist()
+                    res_as = leer_datos("asistencia"); list_pres = res_as[(res_as['id_acta'] == id_sel) & (res_as['asistio'] == 1)]['nombre_qh'].tolist()
                     pdf_a = generar_pdf_acta(acta_r.to_dict(), list_pres)
                     st.download_button(f"📥 Descargar {id_sel}", pdf_a, f"{id_sel}.pdf", mime="application/pdf")
 
-    # --- MÓDULO HOSPITALARIO ---
+    # --- HOSPITALARIO ---
     if TAB_HOS in m_tabs:
         with tabs[m_tabs.index(TAB_HOS)]:
-            st.subheader("❤️ Tronco de la Viuda")
-            col_ing_h, col_egr_h = st.columns(2)
+            st.subheader("❤️ Tronco de la Viuda"); col_ing_h, col_egr_h = st.columns(2)
             with col_ing_h:
                 with st.expander("➕ Ingreso (Óbolo)", expanded=True):
                     with st.form("f_hosp_ing", clear_on_submit=True):
-                        f_h_i = st.date_input("Fecha", datetime.now(), key="fhi")
-                        det_h_i = st.text_input("Detalle", key="dhi")
-                        m_u_h_i = st.number_input("USD", min_value=0.0, key="uhi")
-                        m_b_h_i = st.number_input("Bs", min_value=0.0, key="bhi")
+                        f_h_i = st.date_input("Fecha", datetime.now(), key="fhi"); det_h_i = st.text_input("Detalle", key="dhi")
+                        m_u_h_i = st.number_input("USD", min_value=0.0, key="uhi"); m_b_h_i = st.number_input("Bs", min_value=0.0, key="bhi")
                         if st.form_submit_button("💾 Guardar Ingreso"):
                             client = get_client()
                             try: client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_i), f"INGRESO: {det_h_i}", m_u_h_i, st.session_state.tasa_actual, m_b_h_i))
-                            finally: client.close()
-                            st.rerun()
+                            finally: client.close(); st.rerun()
             with col_egr_h:
                 with st.expander("📤 Egreso (Ayuda)", expanded=True):
                     with st.form("f_hosp_egr", clear_on_submit=True):
-                        f_h_e = st.date_input("Fecha", datetime.now(), key="fhe")
-                        det_h_e = st.text_input("Beneficiario", key="dhe")
-                        m_u_h_e = st.number_input("USD", min_value=0.0, key="uhe")
-                        m_b_h_e = st.number_input("Bs", min_value=0.0, key="bhe")
+                        f_h_e = st.date_input("Fecha", datetime.now(), key="fhe"); det_h_e = st.text_input("Beneficiario", key="dhe")
+                        m_u_h_e = st.number_input("USD", min_value=0.0, key="uhe"); m_b_h_e = st.number_input("Bs", min_value=0.0, key="bhe")
                         if st.form_submit_button("💾 Guardar Ayuda"):
                             client = get_client()
                             try: client.execute("INSERT INTO hospitalario (fecha, detalle, monto_usd, tasa_bcv, monto_bs) VALUES (?, ?, ?, ?, ?)", (str(f_h_e), f"EGRESO: {det_h_e}", -abs(m_u_h_e), st.session_state.tasa_actual, -abs(m_b_h_e)))
-                            finally: client.close()
-                            st.rerun()
+                            finally: client.close(); st.rerun()
             df_h = leer_datos("hospitalario")
-            st.dataframe(df_h.style.format(formatear_miles(df_h)), use_container_width=True)
+            if not df_h.empty: st.dataframe(df_h.style.format(formatear_miles(df_h)), use_container_width=True)
 
-    # --- MÓDULO USUARIOS ---
+    # --- USUARIOS ---
     if TAB_USU in m_tabs:
         with tabs[m_tabs.index(TAB_USU)]:
             st.subheader("👥 Gestión de Usuarios"); df_u = leer_datos("usuarios")
@@ -543,24 +513,20 @@ else:
             with c_u1:
                 with st.expander("➕ Crear Nuevo"):
                     with st.form("crear_u", clear_on_submit=True):
-                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password")
-                        nn = st.text_input("Nombre Q.·.H.·."); ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS)
-                        nr = st.selectbox("Rol", ["Usuario", "Administrador"])
+                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password"); nn = st.text_input("Nombre Q.·.H.·.")
+                        ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
                             try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia) VALUES (?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn, ng, nr, 0, 0, nc))
-                            finally: client.close()
-                            st.rerun()
+                            finally: client.close(); st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar"):
                     with st.form("edit_u", clear_on_submit=True):
-                        u_m = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
-                        n_g = st.selectbox("Actualizar Grado", GRADOS); n_c = st.selectbox("Asignar Cargo", CARGOS)
+                        u_m = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist()); n_g = st.selectbox("Actualizar Grado", GRADOS); n_c = st.selectbox("Asignar Cargo", CARGOS)
                         if st.form_submit_button("Actualizar"):
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
-                            finally: client.close()
-                            st.success("Perfil actualizado."); st.rerun()
+                            finally: client.close(); st.success("Perfil actualizado."); st.rerun()
             with c_u3:
                 with st.expander("🔐 Clave"):
                     with st.form("mod_p", clear_on_submit=True):
@@ -568,10 +534,9 @@ else:
                         if st.form_submit_button("Actualizar"):
                             client = get_client()
                             try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
-                            finally: client.close()
-                            st.success("Clave actualizada.")
+                            finally: client.close(); st.success("Clave actualizada.")
 
-    # --- MÓDULO CONFIGURACIÓN ---
+    # --- CONFIGURACIÓN ---
     if TAB_CON in m_tabs:
         with tabs[m_tabs.index(TAB_CON)]:
             st.subheader("⚙️ Configuración")
@@ -605,8 +570,7 @@ else:
                     client = get_client()
                     try:
                         for t in ["movimientos", "actas", "asistencia", "hospitalario"]: client.execute(f"DELETE FROM {t}")
-                    finally: client.close()
-                    logout()
+                    finally: client.close(); logout()
 
     # --- PORTAL DEL HERMANO ---
     if TAB_POR in m_tabs:
@@ -626,4 +590,18 @@ else:
     if TAB_MRE in m_tabs:
         with tabs[m_tabs.index(TAB_MRE)]:
             st.subheader("📄 Mis Recibos"); df_all2 = leer_datos()
-            mis_mov_raw = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df
+            mis_mov_raw = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df_all2['tipo_operacion'] == 'INGRESO')]
+            if not mis_mov_raw.empty:
+                mis_mov_raw['m_id'] = mis_mov_raw['id'].apply(lambda x: str(x).split('-')[0])
+                opciones_propias = {}
+                for _, r in mis_mov_raw.sort_values(by='fecha', ascending=False).iterrows():
+                    label = f"Fecha: {r['fecha']} | ID: {r['m_id']}"
+                    opciones_propias[label] = r['m_id']
+                seleccion_mre = st.selectbox("Seleccione Recibo para descargar", list(opciones_propias.keys()))
+                m_id = opciones_propias[seleccion_mre]
+                items_r = mis_mov_raw[mis_mov_raw['m_id'] == m_id]
+                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs'], "ref": r['referencia']} for _, r in items_r.iterrows()]
+                pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
+                st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_{m_id}.pdf", mime="application/pdf")
+            else:
+                st.info("No tienes pagos registrados en el sistema.")
