@@ -21,6 +21,7 @@ CARGOS = ["Ninguno", "Venerable Maestro", "1er Vigilante", "2do Vigilante", "Ora
 
 TAB_ING = "📥 Ingresos"
 TAB_EGR = "📤 Egresos"
+TAB_CXP = "🧾 Cuentas x Pagar"
 TAB_DIA = "📖 Diario"
 TAB_REC = "🖨️ Recibos"
 TAB_DAS = "📊 Dashboards"
@@ -51,6 +52,7 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS actas (id_acta TEXT PRIMARY KEY, fecha TEXT, tipo_tenida TEXT, bosquejo TEXT, grado_tenida TEXT)''')
         client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
+        client.execute('''CREATE TABLE IF NOT EXISTS cxp (id TEXT PRIMARY KEY, fecha TEXT, acreedor TEXT, concepto TEXT, monto_usd REAL, monto_bs REAL, estatus TEXT DEFAULT 'Pendiente')''')
         
         try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
         except: pass
@@ -116,14 +118,13 @@ def formatear_miles(df):
     return formato
 
 # --- MOTOR DE INTELIGENCIA FINANCIERA ---
-def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd):
+def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd, tot_cxp_usd, tot_cxp_bs):
     if df_trim.empty:
         return "No hay suficientes datos procesados en este trimestre para generar un análisis."
     
     tasa_ref = st.session_state.tasa_actual
     total_ing_equiv_bs = t_ing_bs + (t_ing_usd * tasa_ref)
     total_egr_equiv_bs = abs(t_egr_bs) + abs(t_egr_usd * tasa_ref)
-    
     flujo_neto = total_ing_equiv_bs - total_egr_equiv_bs
     
     analisis = "💡 **Corte Ejecutivo para la Tenida:**\n\n"
@@ -134,6 +135,13 @@ def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_us
         analisis += f"⚠️ **Alerta de Déficit:** Los egresos operativos ({total_egr_equiv_bs:,.2f} Bs. equiv.) superaron los ingresos del trimestre ({total_ing_equiv_bs:,.2f} Bs. equiv.) por una diferencia de **{abs(flujo_neto):,.2f} Bs.** Se sugiere implementar medidas de recaudación.\n\n"
     else:
         analisis += "⚖️ **Punto de Equilibrio:** Los ingresos y egresos del taller se encuentran perfectamente equilibrados.\n\n"
+    
+    if tot_cxp_usd > 0 or tot_cxp_bs > 0:
+        analisis += f"🚨 **Pasivos Pendientes:** Existen cuentas por pagar que suman **{tot_cxp_bs:,.2f} Bs** y **{tot_cxp_usd:,.2f} $**. "
+        if flujo_neto > 0:
+            analisis += "Se recomienda utilizar el flujo de caja positivo actual para saldar estas obligaciones.\n\n"
+        else:
+            analisis += "Se debe tener precaución financiera ya que el déficit actual dificulta el pago de estas obligaciones.\n\n"
         
     df_egresos = df_trim[df_trim['tipo_operacion'] == 'EGRESO'].copy()
     if not df_egresos.empty:
@@ -257,7 +265,6 @@ if "logged_in" not in st.session_state:
 else:
     info = st.session_state["u_info"]; lista_qh, dict_grados = obtener_miembros()
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
-    # Corrección clave aquí: se restaura el nombre completo de la variable
     tratamiento_masonico = "V.·.H.·." if info['grado'] in ['Maestro Mason', 'Past Master'] else "Q.·.H.·."
     
     with st.sidebar:
@@ -303,7 +310,7 @@ else:
 
     m_tabs = []
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
-    if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_DIA, TAB_REC, TAB_DAS]
+    if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_CXP, TAB_DIA, TAB_REC, TAB_DAS]
     if info['sec']: m_tabs += [TAB_ACT]
     if is_hosp: m_tabs += [TAB_HOS]
     if info['rol'] == 'Administrador': m_tabs += [TAB_USU, TAB_CON]
@@ -363,6 +370,7 @@ else:
         with tabs[m_tabs.index(TAB_EGR)]:
             if 'eg_key' not in st.session_state: st.session_state.eg_key = 0
             st.subheader("📤 Registrar Egreso")
+            st.info("💡 **Nota:** Si estás pagando una 'Cuenta por Pagar', regístralo aquí para que salga el dinero de caja, y luego ve a la pestaña 'Cuentas x Pagar' para marcar la deuda como Pagada.")
             c_e1, c_e2 = st.columns(2)
             f_e = c_e1.date_input("Fecha", datetime.now(), key=f"ef_{st.session_state.eg_key}")
             ben_e = c_e1.text_input("Beneficiario", key=f"eb_{st.session_state.eg_key}")
@@ -378,6 +386,68 @@ else:
                 id_e = f"EG-{datetime.now().strftime('%y%m%d%H%M%S')}"; client = get_client()
                 try: client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (id_e, str(f_e), ben_e, "EGRESO", cat_e, nota_e, r_e, -abs(m_u_e), t_e, -abs(m_b_e)))
                 finally: client.close(); st.session_state.eg_key += 1; st.rerun()
+
+    # --- CUENTAS POR PAGAR (NUEVO MÓDULO) ---
+    if TAB_CXP in m_tabs:
+        with tabs[m_tabs.index(TAB_CXP)]:
+            st.subheader("🧾 Control de Cuentas por Pagar (Pasivos)")
+            
+            with st.expander("➕ Registrar Nueva Deuda / Pasivo", expanded=True):
+                with st.form("f_cxp", clear_on_submit=True):
+                    c1, c2 = st.columns(2)
+                    f_cxp = c1.date_input("Fecha de Registro", datetime.now())
+                    lista_acreedores = lista_qh + ["OTRO (Escribir abajo)"]
+                    acreedor_sel = c1.selectbox("Acreedor (Q.·.H.·. o Profano)", lista_acreedores)
+                    acreedor_otro = c1.text_input("Si eligió OTRO, especifique el nombre:")
+                    
+                    concepto_cxp = c2.text_input("Concepto / Motivo de la Deuda")
+                    m_usd_cxp = c2.number_input("Monto a Deber (USD)", min_value=0.0)
+                    m_bs_cxp = c2.number_input("Monto a Deber (Bs)", min_value=0.0)
+                    
+                    if st.form_submit_button("💾 Guardar Pasivo", type="primary"):
+                        acreedor_final = acreedor_otro.upper() if acreedor_sel == "OTRO (Escribir abajo)" else acreedor_sel
+                        if not acreedor_final or not concepto_cxp or (m_usd_cxp == 0 and m_bs_cxp == 0):
+                            st.error("Por favor complete todos los campos y coloque un monto válido.")
+                        else:
+                            id_cxp = f"CXP-{datetime.now().strftime('%y%m%d%H%M%S')}"
+                            client = get_client()
+                            try:
+                                client.execute("INSERT INTO cxp (id, fecha, acreedor, concepto, monto_usd, monto_bs, estatus) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                               (id_cxp, str(f_cxp), acreedor_final, concepto_cxp.upper(), m_usd_cxp, m_bs_cxp, 'Pendiente'))
+                            finally:
+                                client.close()
+                            st.success("Cuenta por Pagar registrada correctamente.")
+                            st.rerun()
+            
+            st.divider()
+            st.write("**⚠️ Pasivos Pendientes por Saldar**")
+            df_cxp = leer_datos("cxp")
+            if not df_cxp.empty:
+                pendientes = df_cxp[df_cxp['estatus'] == 'Pendiente']
+                if not pendientes.empty:
+                    st.dataframe(pendientes.style.format({'monto_usd': '{:,.2f} $', 'monto_bs': '{:,.2f} Bs'}), use_container_width=True)
+                    
+                    c_p1, c_p2 = st.columns([3, 1])
+                    id_pagar = c_p1.selectbox("Seleccione ID para marcar como PAGADA", pendientes['id'].tolist())
+                    if c_p2.button("✅ Marcar como Pagada"):
+                        client = get_client()
+                        try:
+                            client.execute("UPDATE cxp SET estatus='Pagada' WHERE id=?", (id_pagar,))
+                        finally:
+                            client.close()
+                        st.success("Deuda saldada. Recuerda ir a 'Egresos' para descontar el dinero de la caja si aún no lo has hecho.")
+                        st.rerun()
+                else:
+                    st.success("¡Excelente! No hay cuentas por pagar pendientes en este momento.")
+                
+                with st.expander("📚 Ver Historial de Deudas Pagadas"):
+                    pagadas = df_cxp[df_cxp['estatus'] == 'Pagada']
+                    if not pagadas.empty:
+                        st.dataframe(pagadas.style.format({'monto_usd': '{:,.2f} $', 'monto_bs': '{:,.2f} Bs'}), use_container_width=True)
+                    else:
+                        st.info("No hay historial de deudas pagadas.")
+            else:
+                st.info("No existen registros de cuentas por pagar en el sistema.")
 
     # --- DIARIO ---
     if TAB_DIA in m_tabs:
@@ -418,6 +488,17 @@ else:
             df_u = leer_datos("usuarios")
             df_u_activos = df_u[((df_u['estatus'] == 'Activo') | (df_u['estatus'].isna())) & (~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL']))]
             
+            # --- CÁLCULO DE CUENTAS POR PAGAR PENDIENTES ---
+            df_cxp = leer_datos("cxp")
+            tot_cxp_usd = 0; tot_cxp_bs = 0
+            if not df_cxp.empty:
+                pendientes = df_cxp[df_cxp['estatus'] == 'Pendiente']
+                tot_cxp_usd = pendientes['monto_usd'].sum()
+                tot_cxp_bs = pendientes['monto_bs'].sum()
+            
+            if tot_cxp_usd > 0 or tot_cxp_bs > 0:
+                st.warning(f"🚨 **ALERTA DE PASIVOS:** La Logia tiene deudas pendientes por **{tot_cxp_bs:,.2f} Bs** y **{tot_cxp_usd:,.2f} $**. Revisar pestaña 'Cuentas x Pagar'.")
+
             st.subheader("🗓️ Reporte de Balance Trimestral")
             c_b1, c_b2 = st.columns(2)
             trim_sel = c_b1.selectbox("Seleccione Trimestre", ["1er Trimestre (Ene-Mar)", "2do Trimestre (Abr-Jun)", "3er Trimestre (Jul-Sep)", "4to Trimestre (Oct-Dic)"], index=1)
@@ -439,7 +520,7 @@ else:
                 saldo_caja_trim = t_ing_usd + t_egr_usd
 
                 with st.expander("🤖 Análisis de Inteligencia Financiera", expanded=True):
-                    st.markdown(generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd))
+                    st.markdown(generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd, tot_cxp_usd, tot_cxp_bs))
 
                 col_trim1, col_trim2, col_trim3 = st.columns(3)
                 col_trim1.metric("Movimiento Banco (Bs)", f"{saldo_banco_trim:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
@@ -631,13 +712,14 @@ else:
                     client.execute("UPDATE usuarios SET nombre_qh = UPPER(nombre_qh)")
                     client.execute("UPDATE movimientos SET origen_destino = UPPER(origen_destino)")
                     client.execute("UPDATE asistencia SET nombre_qh = UPPER(nombre_qh)")
+                    client.execute("UPDATE cxp SET acreedor = UPPER(acreedor)")
                     st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
                 finally: client.close(); st.rerun()
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
                     try:
-                        for t in ["movimientos", "actas", "asistencia", "hospitalario"]: client.execute(f"DELETE FROM {t}")
+                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxp"]: client.execute(f"DELETE FROM {t}")
                     finally: client.close(); logout()
 
     # --- PORTAL DEL HERMANO ---
