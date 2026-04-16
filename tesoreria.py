@@ -13,7 +13,7 @@ import base64
 import random
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.4.1-Staging"
+VERSION = "1.5.0-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -237,8 +237,13 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     pdf.set_font('Arial', 'B', 10); pdf.cell(80, 8, "TOTAL", 1); pdf.cell(50, 8, f"{datos_master['monto_usd']:,.2f} $", 1, 0, 'R'); pdf.cell(50, 8, f"{datos_master['monto_bs']:,.2f} Bs.", 1, 1, 'R')
     pdf.ln(15)
     y_actual = pdf.get_y()
+    
     if os.path.exists("sello.png"): pdf.image("sello.png", x=40, y=y_actual, w=35)
-    if os.path.exists("firma.png"): pdf.image("firma.png", x=140, y=y_actual, w=35)
+    
+    # Soporte para la firma del tesorero específica, o la genérica como respaldo
+    if os.path.exists("firma_tes.png"): pdf.image("firma_tes.png", x=140, y=y_actual, w=35)
+    elif os.path.exists("firma.png"): pdf.image("firma.png", x=140, y=y_actual, w=35)
+        
     pdf.ln(35)
     pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, texto_seguro("Annijosé Goitia León"), ln=True, align='R')
     pdf.set_font('Arial', 'I', 9); pdf.cell(0, 5, "Tesorero", ln=True, align='R')
@@ -315,8 +320,19 @@ def generar_carta_plomo_pdf(nombre_qh, cedula_qh, grado_qh, cargo_qh, mes_plomo)
     pdf.ln(25)
     
     y_actual = pdf.get_y()
-    if os.path.exists("firma.png"): pdf.image("firma.png", x=85, y=y_actual-15, w=35)
-    if os.path.exists("sello.png"): pdf.image("sello.png", x=150, y=y_actual-15, w=30)
+    
+    # Colocación de las 3 firmas con base en sus coordenadas exactas
+    # Columna 1 (Secretario): Centro aprox X=40, por ende imagen en X=25
+    if os.path.exists("firma_sec.png"): pdf.image("firma_sec.png", x=25, y=y_actual-15, w=30)
+    
+    # Columna 2 (VM): Centro aprox X=105, por ende imagen en X=90
+    if os.path.exists("firma_vm.png"): pdf.image("firma_vm.png", x=90, y=y_actual-15, w=30)
+    
+    # Columna 3 (Tesorero): Centro aprox X=170, por ende imagen en X=155
+    if os.path.exists("firma_tes.png"): pdf.image("firma_tes.png", x=155, y=y_actual-15, w=30)
+    
+    # El sello de la Logia ubicado en el costado izquierdo, cerca del Secretario
+    if os.path.exists("sello.png"): pdf.image("sello.png", x=12, y=y_actual-20, w=25)
         
     pdf.set_font('Arial', 'B', 10)
     pdf.cell(60, 5, texto_seguro("____________________"), 0, 0, 'C')
@@ -444,7 +460,6 @@ else:
                 st.subheader("📜 Emisión de Carta a Plomo (Grados Capitulares)")
                 st.info("Como Maestro Masón, puedes generar tu Constancia validada por Tesorería y Secretaría para tus trámites capitulares.")
                 
-                # Validación estricta: No debe tener meses pendientes hasta el mes en curso.
                 esta_a_plomo_mes_curso = len(m_pend) == 0
                 
                 if esta_a_plomo_mes_curso:
