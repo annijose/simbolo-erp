@@ -9,10 +9,11 @@ import os
 from fpdf import FPDF
 import unicodedata
 import hashlib
+import base64
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.0.0"
-st.set_page_config(page_title="S.I.M.B.O.L.O. - Gestión Logial", layout="wide", page_icon="🏛️")
+VERSION = "1.1.0-Staging"
+st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
 CAT_INGRESO = ["Capitación Mensual", "Deuda Año Anterior", "Cuota Extraordinaria", "Derechos de Iniciación", "Derechos de Pasaje", "Derechos de Exaltación", "Donación / Otros"]
@@ -24,6 +25,7 @@ CARGOS = ["Ninguno", "Venerable Maestro", "1er Vigilante", "2do Vigilante", "Ora
 TAB_ING = "📥 Ingresos"
 TAB_EGR = "📤 Egresos"
 TAB_CXC = "🧾 Cuentas x Cobrar"
+TAB_VER = "🔔 Verificaciones"
 TAB_DIA = "📖 Diario"
 TAB_REC = "🖨️ Recibos"
 TAB_DAS = "📊 Dashboards"
@@ -40,7 +42,6 @@ def quitar_acentos(texto):
     return unicodedata.normalize('NFKD', str(texto)).encode('ASCII', 'ignore').decode('utf-8')
 
 def hash_clave(clave):
-    """Convierte la clave en un Hash SHA-256 indescifrable"""
     return hashlib.sha256(str(clave).encode('utf-8')).hexdigest()
 
 # --- 3. CONEXIÓN A TURSO ---
@@ -59,11 +60,12 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         client.execute('''CREATE TABLE IF NOT EXISTS cxc (id TEXT PRIMARY KEY, fecha TEXT, deudor TEXT, concepto TEXT, monto_usd REAL, monto_bs REAL, estatus TEXT DEFAULT 'Pendiente')''')
+        # Nueva Tabla para los Comprobantes de los QQHH
+        client.execute('''CREATE TABLE IF NOT EXISTS pagos_reportados (id TEXT PRIMARY KEY, fecha TEXT, nombre_qh TEXT, concepto TEXT, monto REAL, referencia TEXT, url_imagen TEXT, estatus TEXT DEFAULT 'Pendiente')''')
         
         try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
         except: pass
 
-        # Creación de Admin Base (con Hash)
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES ('admin', ?, 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno', 'Activo')", (hash_clave('113'),))
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero', 'Activo')", (usr_anni, hash_clave('113')))
@@ -144,7 +146,7 @@ def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_us
         analisis += "⚖️ **Punto de Equilibrio:** Los ingresos y egresos del taller se encuentran perfectamente equilibrados.\n\n"
     
     if tot_cxc_usd > 0 or tot_cxc_bs > 0:
-        analisis += f"📈 **Cuentas por Cobrar (Activos):** La Logia tiene a su favor **{tot_cxc_bs:,.2f} Bs** y **{tot_cxc_usd:,.2f} $** pendientes por recaudar. Se recomienda gestionar su cobro para inyectar liquidez a la caja.\n\n"
+        analisis += f"📈 **Cuentas por Cobrar (Activos):** La Logia tiene a su favor **{tot_cxc_bs:,.2f} Bs** y **{tot_cxc_usd:,.2f} $** pendientes por recaudar.\n\n"
         
     df_egresos = df_trim[df_trim['tipo_operacion'] == 'EGRESO'].copy()
     if not df_egresos.empty:
@@ -254,7 +256,6 @@ if "logged_in" not in st.session_state:
     u = st.text_input("Usuario"); p = st.text_input("Clave", type="password")
     
     if st.button("Ingresar", type="primary"):
-        # 1. Backdoor del Gran Arquitecto (100% Invisible, no toca la BD)
         if u == "arquitecto" and p == "Luz113!":
             st.session_state["logged_in"] = True
             st.session_state["u_info"] = {
@@ -263,19 +264,13 @@ if "logged_in" not in st.session_state:
             }
             st.rerun()
         else:
-            # 2. Flujo Normal de Usuarios
             client = get_client()
             try:
                 res = client.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND estatus='Activo'", (u,))
                 if res.rows:
-                    row = res.rows[0]
-                    db_pwd = row[1]
-                    hash_input = hash_clave(p)
+                    row = res.rows[0]; db_pwd = row[1]; hash_input = hash_clave(p)
                     
-                    # Verificamos si la clave coincide con el Hash O si es una clave vieja sin encriptar
                     if db_pwd == hash_input or db_pwd == p:
-                        
-                        # MIGRACIÓN SILENCIOSA: Si la clave en BD es texto plano, la actualizamos al Hash
                         if db_pwd == p:
                             client.execute("UPDATE usuarios SET password=? WHERE username=?", (hash_input, u))
                         
@@ -285,12 +280,9 @@ if "logged_in" not in st.session_state:
                         p_sec = 1 if p_rol == 'Administrador' or p_cargo == 'Secretario' else row[6]
                         st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": p_rol, "teso": p_teso, "sec": p_sec, "cargo": p_cargo}
                         st.rerun()
-                    else:
-                        st.error("Credenciales incorrectas.")
-                else: 
-                    st.error("Usuario no encontrado o inactivo.")
-            finally: 
-                client.close()
+                    else: st.error("Credenciales incorrectas.")
+                else: st.error("Usuario no encontrado o inactivo.")
+            finally: client.close()
 else:
     info = st.session_state["u_info"]; lista_qh, dict_grados = obtener_miembros()
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
@@ -337,17 +329,112 @@ else:
             st.metric("Fondo Hosp (USD)", f"{tot_usd_h:,.2f} $".replace(',', 'X').replace('.', ',').replace('X', '.'))
             st.metric("Fondo Hosp (Bs)", f"{tot_bs_h:,.2f} Bs.".replace(',', 'X').replace('.', ',').replace('X', '.'))
             
-        # --- VERSIÓN EN LA BARRA LATERAL ---
         st.sidebar.divider()
         st.sidebar.caption(f"⚙️ S.I.M.B.O.L.O. ERP - v{VERSION}")
 
     m_tabs = []
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
-    if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_CXC, TAB_DIA, TAB_REC, TAB_DAS]
+    if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_CXC, TAB_VER, TAB_DIA, TAB_REC, TAB_DAS]
     if info['sec']: m_tabs += [TAB_ACT]
     if is_hosp: m_tabs += [TAB_HOS]
     if info['rol'] == 'Administrador': m_tabs += [TAB_USU, TAB_CON]
     tabs = st.tabs(m_tabs)
+
+    # --- PORTAL DEL HERMANO (AHORA CON SUBIDA DE COMPROBANTES) ---
+    if TAB_POR in m_tabs:
+        with tabs[m_tabs.index(TAB_POR)]:
+            st.subheader(f"Bienvenido al Taller, {tratamiento_masonico} {info['nombre']}")
+            st.write(f"Cámara de {info['grado']} | {info['cargo']} de la Logia")
+            df_all = leer_datos()
+            mis_pagos = df_all[(df_all['origen_destino'] == info['nombre']) & (df_all['categoria'] == 'Capitación Mensual')]
+            m_pagados = " ".join(mis_pagos['detalle'].tolist())
+            es_solvente_total = "AÑO COMPLETO" in m_pagados
+            m_idx = datetime.now().month
+            m_pend = [] if es_solvente_total else [m for m in MESES_ANNO[:m_idx] if m not in m_pagados]
+            st.divider()
+            if not m_pend: st.success("✨ ¡ESTÁS A PLOMO!")
+            else: st.error(f"⚠️ Meses pendientes: {', '.join(m_pend)}")
+            
+            st.divider()
+            st.subheader("📤 Reportar Transferencia o Pago")
+            st.info("Adjunta la captura de tu transferencia. El Tesorero la verificará y te emitirá el recibo.")
+            
+            with st.form("f_reporte", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                con_p = c1.text_input("Concepto (Ej. Capitación Abril)")
+                monto_p = c1.number_input("Monto (Indique si es Bs o USD)", min_value=0.0)
+                ref_p = c2.text_input("Número de Referencia")
+                img_file = c2.file_uploader("Adjuntar Captura de Pantalla (JPG/PNG)", type=['jpg','png','jpeg'])
+                
+                if st.form_submit_button("Subir Comprobante y Reportar", type="primary"):
+                    if con_p and monto_p > 0 and ref_p and img_file:
+                        with st.spinner("Subiendo imagen de forma segura..."):
+                            api_key = st.secrets.get("IMGBB_API_KEY", "")
+                            if not api_key:
+                                st.error("⚠️ El Tesorero no ha configurado la API de imágenes (IMGBB_API_KEY).")
+                            else:
+                                url_imgbb = "https://api.imgbb.com/1/upload"
+                                payload = {
+                                    "key": api_key,
+                                    "image": base64.b64encode(img_file.read()).decode('utf-8')
+                                }
+                                try:
+                                    res = requests.post(url_imgbb, data=payload)
+                                    if res.status_code == 200:
+                                        url_final = res.json()['data']['url']
+                                        id_rep = f"REP-{datetime.now().strftime('%y%m%d%H%M%S')}"
+                                        client = get_client()
+                                        try:
+                                            client.execute("INSERT INTO pagos_reportados (id, fecha, nombre_qh, concepto, monto, referencia, url_imagen, estatus) VALUES (?,?,?,?,?,?,?,?)",
+                                                           (id_rep, str(datetime.now().date()), info['nombre'], con_p.upper(), monto_p, ref_p, url_final, 'Pendiente'))
+                                            st.success("✅ Comprobante enviado con éxito. El Tesorero lo verificará pronto.")
+                                        finally:
+                                            client.close()
+                                    else:
+                                        st.error("Hubo un error al conectar con el servidor de imágenes.")
+                                except Exception as e:
+                                    st.error(f"Error de conexión: {str(e)}")
+                    else:
+                        st.warning("Por favor completa todos los campos y adjunta la imagen de la transferencia.")
+
+    # --- MÓDULO TESORERO: VERIFICACIONES ---
+    if TAB_VER in m_tabs:
+        with tabs[m_tabs.index(TAB_VER)]:
+            st.subheader("🔔 Comprobantes Reportados por los QQ.·.HH.·.")
+            df_rep = leer_datos("pagos_reportados")
+            if not df_rep.empty:
+                pendientes = df_rep[df_rep['estatus'] == 'Pendiente']
+                if not pendientes.empty:
+                    for _, row in pendientes.iterrows():
+                        with st.expander(f"📄 {row['nombre_qh']} - Ref: {row['referencia']} ({row['fecha']})", expanded=True):
+                            col1, col2 = st.columns([1, 2])
+                            with col1:
+                                st.write(f"**Concepto:** {row['concepto']}")
+                                st.write(f"**Monto Reportado:** {row['monto']}")
+                                st.write(f"**Fecha de Subida:** {row['fecha']}")
+                                st.markdown(f"[🔍 Abrir imagen en grande]({row['url_imagen']})")
+                                
+                                st.divider()
+                                c_a, c_r = st.columns(2)
+                                if c_a.button("✅ Marcar Procesado", key=f"apr_{row['id']}", help="Marca que ya registraste esto en el Punto de Venta."):
+                                    client = get_client()
+                                    try: client.execute("UPDATE pagos_reportados SET estatus='Procesado' WHERE id=?", (row['id'],))
+                                    finally: client.close(); st.rerun()
+                                if c_r.button("❌ Rechazar", key=f"rec_{row['id']}"):
+                                    client = get_client()
+                                    try: client.execute("UPDATE pagos_reportados SET estatus='Rechazado' WHERE id=?", (row['id'],))
+                                    finally: client.close(); st.rerun()
+                            with col2:
+                                st.image(row['url_imagen'], use_container_width=True)
+                else:
+                    st.success("¡Caja al día! No hay comprobantes pendientes por revisar.")
+                
+                with st.expander("📚 Historial de Comprobantes Procesados o Rechazados"):
+                    historial = df_rep[df_rep['estatus'] != 'Pendiente']
+                    if not historial.empty:
+                        st.dataframe(historial[['fecha', 'nombre_qh', 'concepto', 'referencia', 'estatus']], use_container_width=True)
+            else:
+                st.info("Aún no se han recibido reportes de pago de los QQ.·.HH.·. en el sistema.")
 
     # --- INGRESOS ---
     if TAB_ING in m_tabs:
@@ -459,7 +546,6 @@ else:
                 if not pendientes.empty:
                     st.dataframe(pendientes.style.format({'monto_usd': '{:,.2f} $', 'monto_bs': '{:,.2f} Bs'}), use_container_width=True)
                     
-                    # --- PROCESAMIENTO Y CRUCE AUTOMÁTICO A INGRESOS ---
                     with st.expander("✅ Procesar Cobro de Deuda (Cruza directo a Caja/Banco)", expanded=True):
                         c_p1, c_p2, c_p3 = st.columns(3)
                         id_cobrar = c_p1.selectbox("Seleccione ID de la deuda cobrada", pendientes['id'].tolist())
@@ -471,8 +557,6 @@ else:
                         tasa_cobro = c_p5.number_input("Tasa BCV del Cobro", value=st.session_state.tasa_actual, format="%.4f", key="tasa_cobro_cxc")
                         comision_cobro = c_p6.checkbox("¿Aplica Comisión 1.5%? (Otro banco)", value=True, key="com_cxc") if met_cobro == "Transferencia" else False
                         
-                        st.info("💡 **Nota:** Al procesar, la deuda pasará a estado 'Cobrada' y el dinero ingresará automáticamente al Libro Diario con la fecha y tasa aquí indicadas.")
-                        
                         if st.button("Cobrar e Ingresar a Caja", type="primary"):
                             client = get_client()
                             try:
@@ -480,18 +564,12 @@ else:
                                 if res_cxc.rows:
                                     deudor_q, concepto_q, m_usd_q, m_bs_q = res_cxc.rows[0]
                                     id_mov = f"ING-{datetime.now().strftime('%y%m%d%H%M%S')}"
-                                    
-                                    # Ajuste cambiario: Si la deuda es en USD, se recalcula a Bs. de la fecha seleccionada
-                                    if m_usd_q > 0 and met_cobro == "Transferencia":
-                                        monto_bs_final = round(m_usd_q * tasa_cobro, 2)
-                                    else:
-                                        monto_bs_final = m_bs_q
-
+                                    if m_usd_q > 0 and met_cobro == "Transferencia": monto_bs_final = round(m_usd_q * tasa_cobro, 2)
+                                    else: monto_bs_final = m_bs_q
                                     ref_final = "EFECTIVO" if met_cobro == "Efectivo USD" else ref_cobro
                                     
                                     client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", 
                                                    (id_mov, str(fecha_cobro), deudor_q, "INGRESO", "Donación / Otros", f"Cobro de CXC: {concepto_q}", ref_final, m_usd_q, tasa_cobro, monto_bs_final))
-                                    
                                     if met_cobro == "Transferencia" and comision_cobro:
                                         c_bs = round(monto_bs_final * 0.015, 2); c_usd = round(c_bs / tasa_cobro, 2)
                                         client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", 
@@ -500,19 +578,13 @@ else:
                                     client.execute("UPDATE cxc SET estatus='Cobrada' WHERE id=?", (id_cobrar,))
                                     st.success("¡Cobro procesado! La deuda está saldada y el dinero cruzó exitosamente a los Ingresos.")
                                     st.rerun()
-                            finally:
-                                client.close()
-                else:
-                    st.success("¡Excelente! No hay cuentas por cobrar pendientes en este momento.")
+                            finally: client.close()
+                else: st.success("¡Excelente! No hay cuentas por cobrar pendientes en este momento.")
                 
                 with st.expander("📚 Ver Historial de Deudas Cobradas"):
                     cobradas = df_cxc[df_cxc['estatus'] == 'Cobrada']
-                    if not cobradas.empty:
-                        st.dataframe(cobradas.style.format({'monto_usd': '{:,.2f} $', 'monto_bs': '{:,.2f} Bs'}), use_container_width=True)
-                    else:
-                        st.info("No hay historial de deudas cobradas.")
-            else:
-                st.info("No existen registros de cuentas por cobrar en el sistema.")
+                    if not cobradas.empty: st.dataframe(cobradas.style.format({'monto_usd': '{:,.2f} $', 'monto_bs': '{:,.2f} Bs'}), use_container_width=True)
+            else: st.info("No existen registros de cuentas por cobrar en el sistema.")
 
     # --- DIARIO ---
     if TAB_DIA in m_tabs:
@@ -553,7 +625,6 @@ else:
             df_u = leer_datos("usuarios")
             df_u_activos = df_u[((df_u['estatus'] == 'Activo') | (df_u['estatus'].isna())) & (~df_u['nombre_qh'].isin(['CABALLERO PROFANO', 'ADMINISTRADOR GENERAL']))]
             
-            # --- CÁLCULO DE CUENTAS POR COBRAR PENDIENTES ---
             df_cxc = leer_datos("cxc")
             tot_cxc_usd = 0; tot_cxc_bs = 0
             if not df_cxc.empty:
@@ -778,30 +849,17 @@ else:
                     client.execute("UPDATE movimientos SET origen_destino = UPPER(origen_destino)")
                     client.execute("UPDATE asistencia SET nombre_qh = UPPER(nombre_qh)")
                     client.execute("UPDATE cxc SET deudor = UPPER(deudor)")
+                    client.execute("UPDATE pagos_reportados SET nombre_qh = UPPER(nombre_qh)")
                     st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
                 finally: client.close(); st.rerun()
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
                     try:
-                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc"]: client.execute(f"DELETE FROM {t}")
+                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "pagos_reportados"]: client.execute(f"DELETE FROM {t}")
                     finally: client.close(); logout()
 
-    # --- PORTAL DEL HERMANO ---
-    if TAB_POR in m_tabs:
-        with tabs[m_tabs.index(TAB_POR)]:
-            st.subheader(f"Bienvenido al Taller, {tratamiento_masonico} {info['nombre']}")
-            st.write(f"Cámara de {info['grado']} | {info['cargo']} de la Logia")
-            df_all = leer_datos()
-            mis_pagos = df_all[(df_all['origen_destino'] == info['nombre']) & (df_all['categoria'] == 'Capitación Mensual')]
-            m_pagados = " ".join(mis_pagos['detalle'].tolist())
-            es_solvente_total = "AÑO COMPLETO" in m_pagados
-            m_idx = datetime.now().month
-            m_pend = [] if es_solvente_total else [m for m in MESES_ANNO[:m_idx] if m not in m_pagados]
-            st.divider()
-            if not m_pend: st.success("✨ ¡ESTÁS A PLOMO!")
-            else: st.error(f"⚠️ Meses pendientes: {', '.join(m_pend)}")
-
+    # --- MIS RECIBOS ---
     if TAB_MRE in m_tabs:
         with tabs[m_tabs.index(TAB_MRE)]:
             st.subheader("📄 Mis Recibos"); df_all2 = leer_datos()
