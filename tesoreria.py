@@ -13,7 +13,7 @@ import base64
 import random
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.3.0-Staging"
+VERSION = "1.4.0-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -266,6 +266,74 @@ def generar_pdf_acta(d, presentes):
     salida = pdf.output(dest='S')
     return salida.encode('latin-1', 'replace') if isinstance(salida, str) else bytes(salida)
 
+def generar_carta_plomo_pdf(nombre_qh, cedula_qh, grado_qh, cargo_qh, mes_plomo):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    if os.path.exists("logo.png"): pdf.image("logo.png", 10, 8, 25)
+    
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(0, 5, texto_seguro("A L.·. G.·. D.·. G.·. A.·. D.·. U.·."), ln=True, align='C')
+    pdf.cell(0, 5, texto_seguro("Resp.·. Log.·. Símbolo N° 113"), ln=True, align='C')
+    pdf.cell(0, 5, texto_seguro("R.·. E.·. A.·. A.·."), ln=True, align='C')
+    
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, texto_seguro("Constituida bajo los auspicios de la muy Resp.·. Gran Logia de la República de Venezuela"), ln=True, align='C')
+    pdf.cell(0, 5, texto_seguro("Gran Templo Masónico – Jesuitas a Maturín – No. 5"), ln=True, align='C')
+    pdf.cell(0, 5, texto_seguro("Apartado 927 Or.·. De Caracas"), ln=True, align='C')
+    pdf.ln(5)
+    
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(0, 5, texto_seguro("S.·. F.·. U.·.                                        L.·. I.·. F.·."), ln=True, align='C')
+    pdf.ln(5)
+    
+    hoy = datetime.now()
+    fecha_str = f"Or.·. de Caracas {hoy.day} de {MESES_ANNO[hoy.month-1].lower()} del {hoy.year} (e.·. v.·.)"
+    pdf.set_font('Arial', '', 11)
+    pdf.cell(0, 5, texto_seguro(fecha_str), ln=True, align='R')
+    pdf.ln(10)
+    
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, texto_seguro("Constancia"), ln=True, align='C')
+    pdf.ln(5)
+    
+    pdf.set_font('Arial', '', 12)
+    cargo_texto = f"ostentando el cargo de {cargo_qh}" if cargo_qh != "Ninguno" else "sin cargo en la oficialidad actual"
+    
+    cuerpo = (f"Hacemos saber que nuestro Q.·. H.·. {nombre_qh} C.I. {cedula_qh} poseedor del Grado de {grado_qh}, "
+              f"es miembro activo de nuestro respetable taller, {cargo_texto} y no se encuentra ni Entredicho ni Penado, "
+              f"quien está a plomo con el mismo hasta el mes de {mes_plomo}, por lo tanto, está en pleno goce de todos "
+              f"los derechos masónicos consagrados en nuestras leyes vigentes.")
+    pdf.multi_cell(0, 8, texto_seguro(cuerpo), align='J')
+    pdf.ln(5)
+    
+    cuerpo2 = f"Dada, firmada y sellada en nuestro templo masónico, al Or.·. de Caracas, a los {hoy.day} días del mes de {MESES_ANNO[hoy.month-1]} del {hoy.year} (e.·. v.·.)"
+    pdf.multi_cell(0, 8, texto_seguro(cuerpo2), align='J')
+    pdf.ln(15)
+    
+    pdf.cell(0, 5, texto_seguro("Fraternalmente,"), ln=True, align='C')
+    pdf.ln(25)
+    
+    y_actual = pdf.get_y()
+    if os.path.exists("firma.png"): pdf.image("firma.png", x=85, y=y_actual-15, w=35)
+    if os.path.exists("sello.png"): pdf.image("sello.png", x=150, y=y_actual-15, w=30)
+        
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(60, 5, texto_seguro("____________________"), 0, 0, 'C')
+    pdf.cell(70, 5, texto_seguro("____________________"), 0, 0, 'C')
+    pdf.cell(60, 5, texto_seguro("____________________"), 0, 1, 'C')
+    
+    pdf.cell(60, 5, texto_seguro("Secretario"), 0, 0, 'C')
+    pdf.cell(70, 5, texto_seguro("Ven.·. Maestro"), 0, 0, 'C')
+    pdf.cell(60, 5, texto_seguro("Annijosé Goitia León"), 0, 1, 'C')
+    
+    pdf.cell(60, 5, texto_seguro(""), 0, 0, 'C')
+    pdf.cell(70, 5, texto_seguro(""), 0, 0, 'C')
+    pdf.cell(60, 5, texto_seguro("Tes.·."), 0, 1, 'C')
+    
+    salida = pdf.output(dest='S')
+    return salida.encode('latin-1', 'replace') if isinstance(salida, str) else bytes(salida)
+
 # --- 5. LÓGICA DE ACCESO Y SEGURIDAD ---
 if "logged_in" not in st.session_state:
     st.title("🏛️ S.I.M.B.O.L.O. - Portal Logial")
@@ -369,6 +437,28 @@ else:
             st.divider()
             if not m_pend: st.success("✨ ¡ESTÁS A PLOMO!")
             else: st.error(f"⚠️ Meses pendientes: {', '.join(m_pend)}")
+            
+            # --- SECCIÓN: CARTA A PLOMO (Solo Maestros) ---
+            if info['grado'] in ['Maestro Mason', 'Past Master']:
+                st.divider()
+                st.subheader("📜 Emisión de Carta a Plomo (Grados Capitulares)")
+                st.info("Como Maestro Masón, puedes generar tu Constancia validada por Tesorería y Secretaría para tus trámites capitulares.")
+                
+                ultimo_mes_pagado = "Ninguno"
+                if es_solvente_total:
+                    ultimo_mes_pagado = "Diciembre (Solvencia Anual)"
+                else:
+                    meses_pagos = [m for m in MESES_ANNO if m in m_pagados]
+                    if meses_pagos: ultimo_mes_pagado = meses_pagos[-1]
+                    
+                cedula_qh = st.text_input("Cédula de Identidad (Requerida para el documento):", key="cedula_plomo")
+                
+                if ultimo_mes_pagado != "Ninguno":
+                    if cedula_qh:
+                        pdf_carta = generar_carta_plomo_pdf(info['nombre'], cedula_qh, info['grado'], info['cargo'], ultimo_mes_pagado)
+                        st.download_button("📥 Descargar Carta a Plomo (PDF)", data=pdf_carta, file_name=f"Carta_Plomo_{info['nombre'].replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
+                else:
+                    st.warning("No se registran pagos de capitación en el sistema. Debe estar a plomo para generar este documento oficial.")
 
     # --- INGRESOS ---
     if TAB_ING in m_tabs:
