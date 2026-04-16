@@ -13,7 +13,7 @@ import base64
 import random
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.5.1-Staging"
+VERSION = "1.5.2-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -871,20 +871,29 @@ else:
             with c_u1:
                 with st.expander("➕ Crear Nuevo"):
                     with st.form("crear_u", clear_on_submit=True):
-                        nu = st.text_input("Usuario"); np = st.text_input("Clave", type="password"); nn = st.text_input("Nombre Q.·.H.·.")
+                        nu = st.text_input("Usuario (Login)"); np = st.text_input("Clave", type="password"); nn = st.text_input("Nombre Q.·.H.·.")
                         ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
                             try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?,?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), hash_clave(np), nn.upper(), ng, nr, 0, 0, nc, 'Activo'))
                             finally: client.close(); st.rerun()
             with c_u2:
-                with st.expander("✏️ Modificar"):
+                with st.expander("✏️ Modificar Perfil"):
                     with st.form("edit_u", clear_on_submit=True):
-                        u_m = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist()); n_g = st.selectbox("Actualizar Grado", GRADOS); n_c = st.selectbox("Asignar Cargo", CARGOS)
+                        u_m = st.selectbox("Seleccionar Q.·.H.·.", df_u['nombre_qh'].tolist())
+                        st.caption("Deje el Nuevo Usuario en blanco si no desea cambiarlo")
+                        n_usr = st.text_input("Nuevo Usuario (Login)")
+                        n_g = st.selectbox("Actualizar Grado", GRADOS); n_c = st.selectbox("Asignar Cargo", CARGOS)
                         if st.form_submit_button("Actualizar"):
                             client = get_client()
-                            try: client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
-                            finally: client.close(); st.success("Perfil actualizado."); st.rerun()
+                            try: 
+                                if n_usr.strip():
+                                    n_usr_clean = quitar_acentos(n_usr.lower().strip())
+                                    client.execute("UPDATE usuarios SET username=?, grado=?, cargo_logia=? WHERE nombre_qh=?", (n_usr_clean, n_g, n_c, u_m))
+                                else:
+                                    client.execute("UPDATE usuarios SET grado=?, cargo_logia=? WHERE nombre_qh=?", (n_g, n_c, u_m))
+                            finally: client.close()
+                            st.success("Perfil actualizado."); st.rerun()
             with c_u3:
                 with st.expander("🔐 Clave"):
                     with st.form("mod_p", clear_on_submit=True):
@@ -976,11 +985,11 @@ else:
                         username = nombre.lower().replace(" ", "")
                         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 'Activo')", (username, clave_hash, nombre, grado, rol, cargo))
 
-                    meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto"]
+                    meses = ["Enero", "Febrero", "Marzo", "Abril"]
                     client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-DEMO-1', str(datetime.now().date()), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, 45.00, 1500.00))
                     
                     for i, (nombre, _, _, _) in enumerate(nombres_demo[:6]):
-                        meses_pagados = random.sample(meses, random.randint(1, 5))
+                        meses_pagados = random.sample(meses, random.randint(1, 3))
                         for mes in meses_pagados:
                             fecha_pago = (datetime.now() - timedelta(days=random.randint(1, 60))).strftime('%Y-%m-%d')
                             client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"DEMO-{i}-{mes}", fecha_pago, nombre, "INGRESO", "Capitación Mensual", mes, f"REF-{random.randint(1000,9999)}", 0.0, 45.5, 682.5))
