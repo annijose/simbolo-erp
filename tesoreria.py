@@ -13,7 +13,7 @@ import base64
 import random
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.4.0-Staging"
+VERSION = "1.4.1-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -444,21 +444,19 @@ else:
                 st.subheader("📜 Emisión de Carta a Plomo (Grados Capitulares)")
                 st.info("Como Maestro Masón, puedes generar tu Constancia validada por Tesorería y Secretaría para tus trámites capitulares.")
                 
-                ultimo_mes_pagado = "Ninguno"
-                if es_solvente_total:
-                    ultimo_mes_pagado = "Diciembre (Solvencia Anual)"
-                else:
-                    meses_pagos = [m for m in MESES_ANNO if m in m_pagados]
-                    if meses_pagos: ultimo_mes_pagado = meses_pagos[-1]
-                    
-                cedula_qh = st.text_input("Cédula de Identidad (Requerida para el documento):", key="cedula_plomo")
+                # Validación estricta: No debe tener meses pendientes hasta el mes en curso.
+                esta_a_plomo_mes_curso = len(m_pend) == 0
                 
-                if ultimo_mes_pagado != "Ninguno":
+                if esta_a_plomo_mes_curso:
+                    ultimo_mes_pagado = "Diciembre (Solvencia Anual)" if es_solvente_total else MESES_ANNO[m_idx-1]
+                    cedula_qh = st.text_input("Cédula de Identidad (Requerida para el documento):", key="cedula_plomo")
+                    
                     if cedula_qh:
                         pdf_carta = generar_carta_plomo_pdf(info['nombre'], cedula_qh, info['grado'], info['cargo'], ultimo_mes_pagado)
                         st.download_button("📥 Descargar Carta a Plomo (PDF)", data=pdf_carta, file_name=f"Carta_Plomo_{info['nombre'].replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
                 else:
-                    st.warning("No se registran pagos de capitación en el sistema. Debe estar a plomo para generar este documento oficial.")
+                    st.error(f"🚫 Documento Bloqueado: Para emitir la Carta a Plomo de forma automática, debes estar solvente hasta el mes en curso ({MESES_ANNO[m_idx-1]}).")
+                    st.warning(f"Meses con deuda para desbloquear el documento: {', '.join(m_pend)}")
 
     # --- INGRESOS ---
     if TAB_ING in m_tabs:
