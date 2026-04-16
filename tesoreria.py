@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import libsql_client
 import requests
 from bs4 import BeautifulSoup
@@ -10,6 +10,7 @@ from fpdf import FPDF
 import unicodedata
 import hashlib
 import base64
+import random
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
 VERSION = "1.3.0-Staging"
@@ -60,8 +61,6 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         client.execute('''CREATE TABLE IF NOT EXISTS cxc (id TEXT PRIMARY KEY, fecha TEXT, deudor TEXT, concepto TEXT, monto_usd REAL, monto_bs REAL, estatus TEXT DEFAULT 'Pendiente')''')
         client.execute('''CREATE TABLE IF NOT EXISTS soportes_bancarios (id_transaccion TEXT PRIMARY KEY, url_soporte TEXT)''')
-        
-        # Nueva Tabla: Historial de Tasas Interno
         client.execute('''CREATE TABLE IF NOT EXISTS historial_tasas (fecha TEXT PRIMARY KEY, tasa REAL)''')
         
         try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
@@ -131,10 +130,6 @@ if 'tasa_actual' not in st.session_state:
     st.session_state.tasa_actual = obtener_tasa_bcv()
     registrar_tasa_historica(st.session_state.tasa_actual)
 
-def texto_seguro(texto):
-    if not texto: return ""
-    return str(texto).encode('latin-1', 'replace').decode('latin-1')
-
 def formatear_miles(df):
     columnas_monto = ['monto_usd', 'tasa_bcv', 'monto_bs', 'equiv_usd_al_dia']
     formato = {}
@@ -142,6 +137,10 @@ def formatear_miles(df):
         if col in df.columns:
             formato[col] = lambda x: f"{x:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     return formato
+
+def texto_seguro(texto):
+    if not texto: return ""
+    return str(texto).encode('latin-1', 'replace').decode('latin-1')
 
 # --- MOTOR DE INTELIGENCIA FINANCIERA ---
 def generar_reporte_inteligente(df_trim, t_ing_bs, t_egr_bs, t_ing_usd, t_egr_usd, tot_cxc_usd, tot_cxc_bs):
@@ -816,91 +815,19 @@ else:
                 ops = {}
                 for _, r in df_m.sort_values(by='fecha', ascending=False).iterrows():
                     if not str(r['id']).startswith("COM-"):
-                        lbl = f"QH: {r['origen_destino']} | Monto: {r['monto_bs']:,.2f} Bs | Fecha: {r['fecha']} | ID: {r['id']}"; ops[lbl] = r['id']
+                        lbl = f"QH: {r['origen_destino']} | Monto: {r['monto_bs']:,.2f} Bs | Fecha: {r['fecha']} | ID: {r['id']}"
+                        ops[lbl] = r['id']
                 id_anul = st.selectbox("Seleccione para ANULAR", list(ops.keys()))
                 if st.button("❌ ANULAR MOVIMIENTO SELECCIONADO", type="primary"):
-                    client = get_client(); rid = ops[id_anul]
-                    try: 
-                        client.execute("DELETE FROM movimientos WHERE id=?", (rid,))
-                        client.execute("DELETE FROM movimientos WHERE id LIKE ?", (f"COM-{rid}%",))
-                        st.success("Anulado."); st.rerun()
-                    finally: client.close()
-            st.divider(); st.error("🚨 ZONA DE PELIGRO")
-            if st.button("🔠 Convertir Nombres a MAYÚSCULAS"):
-                client = get_client()
-                try:
-                    client.execute("UPDATE usuarios SET nombre_qh = UPPER(nombre_qh)")
-                    client.execute("UPDATE movimientos SET origen_destino = UPPER(origen_destino)")
-                    client.execute("UPDATE asistencia SET nombre_qh = UPPER(nombre_qh)")
-                    client.execute("UPDATE cxc SET deudor = UPPER(deudor)")
-                    st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
-                finally: client.close(); st.rerun()
-                    st.divider()
-            st.warning("🧪 ZONA DE DEMO / STAGING")
-            if st.button("🚀 INYECTAR DATOS DE PRUEBA (QQ.·.HH.·. y Pagos)", type="primary"):
-                client = get_client()
-                try:
-                    import random
-                    from datetime import timedelta
-                    
-                    nombres_demo = [
-                        ("FRANCISCO DE MIRANDA", "Past Master", "Venerable Maestro", "Administrador"),
-                        ("ANTONIO JOSE DE SUCRE", "Maestro Mason", "1er Vigilante", "Usuario"),
-                        ("SIMON BOLIVAR", "Maestro Mason", "2do Vigilante", "Usuario"),
-                        ("ANDRES BELLO", "Maestro Mason", "Orador Fiscal", "Usuario"),
-                        ("JOSE MARIA VARGAS", "Maestro Mason", "Secretario", "Usuario"),
-                        ("ARTURO MICHELENA", "Maestro Mason", "Hospitalario", "Usuario"),
-                        ("JACINTO CONVIT", "Maestro Mason", "Experto", "Usuario"),
-                        ("RAUL LEONI", "Compañero", "Ninguno", "Usuario"),
-                        ("ROMULO GALLEGOS", "Compañero", "Ninguno", "Usuario"),
-                        ("CARLOS CRUZ-DIEZ", "Aprendiz", "Ninguno", "Usuario")
-                    ]
-                    clave_hash = hash_clave("123")
-                    
-                    # Inyectar Usuarios
-                    for nombre, grado, cargo, rol in nombres_demo:
-                        username = nombre.lower().replace(" ", "")
-                        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 'Activo')", (username, clave_hash, nombre, grado, rol, cargo))
-
-                    # Inyectar Movimientos (Solo a los primeros 6 para tener morosos)
-                    meses = ["Enero", "Febrero", "Marzo", "Abril"]
-                    client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-DEMO-1', str(datetime.now().date()), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, 45.00, 1500.00))
-                    
-                    for i, (nombre, _, _, _) in enumerate(nombres_demo[:6]):
-                        meses_pagados = random.sample(meses, random.randint(1, 3))
-                        for mes in meses_pagados:
-                            fecha_pago = (datetime.now() - timedelta(days=random.randint(1, 60))).strftime('%Y-%m-%d')
-                            client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"DEMO-{i}-{mes}", fecha_pago, nombre, "INGRESO", "Capitación Mensual", mes, f"REF-{random.randint(1000,9999)}", 0.0, 45.5, 682.5))
-                    
-                    st.success("✅ ¡Datos inyectados exitosamente! Ve a la pestaña de Dashboards para ver la magia.")
-                finally:
-                    client.close()
-            if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
-                if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
-                    try:
-                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "soportes_bancarios", "historial_tasas"]: client.execute(f"DELETE FROM {t}")
-                    finally: client.close(); logout()
-
-   # --- CONFIGURACIÓN ---
-    if TAB_CON in m_tabs:
-        with tabs[m_tabs.index(TAB_CON)]:
-            st.subheader("⚙️ Configuración")
-            st.write("**🚨 Anulación de Movimientos Específicos**")
-            df_m = leer_datos()
-            if not df_m.empty:
-                ops = {}
-                for _, r in df_m.sort_values(by='fecha', ascending=False).iterrows():
-                    if not str(r['id']).startswith("COM-"):
-                        lbl = f"QH: {r['origen_destino']} | Monto: {r['monto_bs']:,.2f} Bs | Fecha: {r['fecha']} | ID: {r['id']}"; ops[lbl] = r['id']
-                id_anul = st.selectbox("Seleccione para ANULAR", list(ops.keys()))
-                if st.button("❌ ANULAR MOVIMIENTO SELECCIONADO", type="primary"):
-                    client = get_client(); rid = ops[id_anul]
+                    rid = ops[id_anul]
                     try: 
                         client.execute("DELETE FROM movimientos WHERE id=?", (rid,))
                         client.execute("DELETE FROM movimientos WHERE id LIKE ?", (f"COM-{rid}%",))
-                        st.success("Anulado."); st.rerun()
-                    finally: client.close()
+                        st.success("Anulado.")
+                        st.rerun()
+                    finally: 
+                        client.close()
             st.divider()
             st.error("🚨 ZONA DE PELIGRO")
             if st.button("🔠 Convertir Nombres a MAYÚSCULAS"):
@@ -910,11 +837,12 @@ else:
                     client.execute("UPDATE movimientos SET origen_destino = UPPER(origen_destino)")
                     client.execute("UPDATE asistencia SET nombre_qh = UPPER(nombre_qh)")
                     client.execute("UPDATE cxc SET deudor = UPPER(deudor)")
-                    # Para evitar errores si la tabla pagos_reportados no existe en versiones anteriores, usamos un bloque try independiente
                     try: client.execute("UPDATE pagos_reportados SET nombre_qh = UPPER(nombre_qh)")
                     except: pass
                     st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
-                finally: client.close(); st.rerun()
+                finally: 
+                    client.close()
+                    st.rerun()
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
@@ -922,7 +850,9 @@ else:
                         for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "soportes_bancarios", "historial_tasas"]: 
                             try: client.execute(f"DELETE FROM {t}")
                             except: pass
-                    finally: client.close(); logout()
+                    finally: 
+                        client.close()
+                        logout()
 
             # --- BOTÓN DE INYECCIÓN DE DEMO ---
             st.divider()
@@ -930,9 +860,6 @@ else:
             if st.button("🚀 INYECTAR DATOS DE PRUEBA (QQ.·.HH.·. y Pagos)", type="primary"):
                 client = get_client()
                 try:
-                    import random
-                    from datetime import timedelta
-                    
                     nombres_demo = [
                         ("FRANCISCO DE MIRANDA", "Past Master", "Venerable Maestro", "Administrador"),
                         ("ANTONIO JOSE DE SUCRE", "Maestro Mason", "1er Vigilante", "Usuario"),
@@ -947,12 +874,10 @@ else:
                     ]
                     clave_hash = hash_clave("123")
                     
-                    # Inyectar Usuarios
                     for nombre, grado, cargo, rol in nombres_demo:
                         username = nombre.lower().replace(" ", "")
                         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 'Activo')", (username, clave_hash, nombre, grado, rol, cargo))
 
-                    # Inyectar Movimientos (Solo a los primeros 6 para tener morosos)
                     meses = ["Enero", "Febrero", "Marzo", "Abril"]
                     client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-DEMO-1', str(datetime.now().date()), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, 45.00, 1500.00))
                     
@@ -965,3 +890,23 @@ else:
                     st.success("✅ ¡Datos inyectados exitosamente! Ve a la pestaña de Dashboards para ver la magia.")
                 finally:
                     client.close()
+
+    # --- MIS RECIBOS ---
+    if TAB_MRE in m_tabs:
+        with tabs[m_tabs.index(TAB_MRE)]:
+            st.subheader("📄 Mis Recibos"); df_all2 = leer_datos()
+            mis_mov_raw = df_all2[(df_all2['origen_destino'] == info['nombre']) & (df_all2['tipo_operacion'] == 'INGRESO')]
+            if not mis_mov_raw.empty:
+                mis_mov_raw['m_id'] = mis_mov_raw['id'].apply(lambda x: str(x).split('-')[0])
+                opciones_propias = {}
+                for _, r in mis_mov_raw.sort_values(by='fecha', ascending=False).iterrows():
+                    label = f"Fecha: {r['fecha']} | ID: {r['m_id']}"
+                    opciones_propias[label] = r['m_id']
+                seleccion_mre = st.selectbox("Seleccione Recibo para descargar", list(opciones_propias.keys()))
+                m_id = opciones_propias[seleccion_mre]
+                items_r = mis_mov_raw[mis_mov_raw['m_id'] == m_id]
+                l_i = [{"categoria": r['categoria'], "detalle": r['detalle'], "monto_usd": r['monto_usd'], "monto_bs": r['monto_bs'], "ref": r['referencia']} for _, r in items_r.iterrows()]
+                pdf_b = generar_recibo_multiple({'id': m_id, 'fecha': items_r['fecha'].iloc[0], 'qh': info['nombre'], 'monto_usd': items_r['monto_usd'].sum(), 'monto_bs': items_r['monto_bs'].sum(), 'ref': items_r['referencia'].iloc[0]}, l_i, info['grado'])
+                st.download_button(f"📥 Descargar PDF {m_id}", pdf_b, f"Recibo_{m_id}.pdf", mime="application/pdf")
+            else:
+                st.info("No tienes pagos registrados en el sistema.")
