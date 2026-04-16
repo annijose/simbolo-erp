@@ -835,6 +835,46 @@ else:
                     client.execute("UPDATE cxc SET deudor = UPPER(deudor)")
                     st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
                 finally: client.close(); st.rerun()
+                    st.divider()
+            st.warning("🧪 ZONA DE DEMO / STAGING")
+            if st.button("🚀 INYECTAR DATOS DE PRUEBA (QQ.·.HH.·. y Pagos)", type="primary"):
+                client = get_client()
+                try:
+                    import random
+                    from datetime import timedelta
+                    
+                    nombres_demo = [
+                        ("FRANCISCO DE MIRANDA", "Past Master", "Venerable Maestro", "Administrador"),
+                        ("ANTONIO JOSE DE SUCRE", "Maestro Mason", "1er Vigilante", "Usuario"),
+                        ("SIMON BOLIVAR", "Maestro Mason", "2do Vigilante", "Usuario"),
+                        ("ANDRES BELLO", "Maestro Mason", "Orador Fiscal", "Usuario"),
+                        ("JOSE MARIA VARGAS", "Maestro Mason", "Secretario", "Usuario"),
+                        ("ARTURO MICHELENA", "Maestro Mason", "Hospitalario", "Usuario"),
+                        ("JACINTO CONVIT", "Maestro Mason", "Experto", "Usuario"),
+                        ("RAUL LEONI", "Compañero", "Ninguno", "Usuario"),
+                        ("ROMULO GALLEGOS", "Compañero", "Ninguno", "Usuario"),
+                        ("CARLOS CRUZ-DIEZ", "Aprendiz", "Ninguno", "Usuario")
+                    ]
+                    clave_hash = hash_clave("123")
+                    
+                    # Inyectar Usuarios
+                    for nombre, grado, cargo, rol in nombres_demo:
+                        username = nombre.lower().replace(" ", "")
+                        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 'Activo')", (username, clave_hash, nombre, grado, rol, cargo))
+
+                    # Inyectar Movimientos (Solo a los primeros 6 para tener morosos)
+                    meses = ["Enero", "Febrero", "Marzo", "Abril"]
+                    client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-DEMO-1', str(datetime.now().date()), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, 45.00, 1500.00))
+                    
+                    for i, (nombre, _, _, _) in enumerate(nombres_demo[:6]):
+                        meses_pagados = random.sample(meses, random.randint(1, 3))
+                        for mes in meses_pagados:
+                            fecha_pago = (datetime.now() - timedelta(days=random.randint(1, 60))).strftime('%Y-%m-%d')
+                            client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"DEMO-{i}-{mes}", fecha_pago, nombre, "INGRESO", "Capitación Mensual", mes, f"REF-{random.randint(1000,9999)}", 0.0, 45.5, 682.5))
+                    
+                    st.success("✅ ¡Datos inyectados exitosamente! Ve a la pestaña de Dashboards para ver la magia.")
+                finally:
+                    client.close()
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
