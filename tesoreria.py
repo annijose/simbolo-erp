@@ -11,9 +11,10 @@ import unicodedata
 import hashlib
 import base64
 import random
+import streamlit.components.v1 as components
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.5.2-Staging"
+VERSION = "1.5.3-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -467,6 +468,17 @@ else:
                 else:
                     st.error(f"🚫 Documento Bloqueado: Para emitir la Carta a Plomo de forma automática, debes estar solvente al menos hasta el mes en curso ({MESES_ANNO[m_idx-1]}).")
                     st.warning(f"Meses con deuda para desbloquear el documento: {', '.join(m_pend)}")
+
+            # --- WIDGET DE INSTAGRAM ---
+            st.divider()
+            st.subheader("📸 Actualidad del Taller (@logiasimbolo113)")
+            
+            codigo_instagram = """
+            <script src="https://elfsightcdn.com/platform.js" async></script>
+            <div class="elfsight-app-6b8dd773-00b3-4b7f-8534-da1aad512d09" data-elfsight-app-lazy></div>
+            """
+            
+            components.html(codigo_instagram, height=800, scrolling=True)
 
     # --- INGRESOS ---
     if TAB_ING in m_tabs:
