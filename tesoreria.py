@@ -12,7 +12,7 @@ import hashlib
 import base64
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.2.0-Staging"
+VERSION = "1.3.0-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -59,8 +59,10 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         client.execute('''CREATE TABLE IF NOT EXISTS cxc (id TEXT PRIMARY KEY, fecha TEXT, deudor TEXT, concepto TEXT, monto_usd REAL, monto_bs REAL, estatus TEXT DEFAULT 'Pendiente')''')
-        # Nueva Tabla para Auditoría de Soportes (Imágenes de Transferencias)
         client.execute('''CREATE TABLE IF NOT EXISTS soportes_bancarios (id_transaccion TEXT PRIMARY KEY, url_soporte TEXT)''')
+        
+        # Nueva Tabla: Historial de Tasas Interno
+        client.execute('''CREATE TABLE IF NOT EXISTS historial_tasas (fecha TEXT PRIMARY KEY, tasa REAL)''')
         
         try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
         except: pass
@@ -118,8 +120,16 @@ def obtener_tasa_bcv():
         return round(float(tasa_str.replace(',', '.')), 2)
     except: return 45.00
 
+def registrar_tasa_historica(tasa):
+    if tasa > 0:
+        hoy = str(datetime.now().date())
+        client = get_client()
+        try: client.execute("INSERT OR IGNORE INTO historial_tasas (fecha, tasa) VALUES (?, ?)", (hoy, tasa))
+        finally: client.close()
+
 if 'tasa_actual' not in st.session_state:
     st.session_state.tasa_actual = obtener_tasa_bcv()
+    registrar_tasa_historica(st.session_state.tasa_actual)
 
 def texto_seguro(texto):
     if not texto: return ""
@@ -369,6 +379,20 @@ else:
             if 'f_key' not in st.session_state: st.session_state.f_key = 0
             
             st.subheader("📝 Punto de Venta")
+            
+            # --- PANEL DE HISTÓRICO DE TASAS ---
+            with st.expander("📅 Consultar Histórico de Tasas Guardadas", expanded=False):
+                client = get_client()
+                try:
+                    res_t = client.execute("SELECT fecha, tasa FROM historial_tasas ORDER BY fecha DESC LIMIT 10")
+                    if res_t.rows:
+                        df_t = pd.DataFrame([list(r) for r in res_t.rows], columns=['Fecha', 'Tasa BCV'])
+                        st.dataframe(df_t.style.format({'Tasa BCV': '{:.4f}'}), use_container_width=True)
+                    else:
+                        st.info("El historial comenzará a llenarse automáticamente a partir de hoy.")
+                finally:
+                    client.close()
+                    
             c_g1, c_g2, c_g3, c_g4 = st.columns([2, 1.5, 1.5, 1])
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
@@ -407,7 +431,6 @@ else:
                     id_m = datetime.now().strftime('%y%m%d%H%M%S')
                     url_final_img = ""
                     
-                    # 1. Proceso de Subida a ImgBB si hay archivo
                     if img_file:
                         with st.spinner("Subiendo soporte a la nube para auditoría..."):
                             api_key = st.secrets.get("IMGBB_API_KEY", "")
@@ -417,7 +440,6 @@ else:
                                     if res.status_code == 200: url_final_img = res.json()['data']['url']
                                 except Exception as e: st.warning(f"Error al subir imagen: {e}")
                     
-                    # 2. Inserción en Base de Datos
                     client = get_client()
                     try:
                         for idx, item in enumerate(st.session_state.carrito):
@@ -426,13 +448,11 @@ else:
                                 com_bs = round(item['monto_bs'] * 0.015, 2); com_usd = round(com_bs / ts_in, 2)
                                 client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"COM-{id_m}-{idx}", str(fecha_p), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {item["ref"]}', 'COMIS. CRI OB REC', -abs(com_usd), ts_in, -abs(com_bs)))
                         
-                        # Guardar el link de la foto en la tabla sombra de auditoría
                         if url_final_img:
                             client.execute("INSERT INTO soportes_bancarios (id_transaccion, url_soporte) VALUES (?,?)", (id_m, url_final_img))
                             
                     finally: client.close()
                     
-                    # 3. Generación de PDF
                     pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': st.session_state.carrito[0]['ref']}, st.session_state.carrito, dict_grados.get(qh_in, ""))
                     st.session_state.u_recibo = {"bytes": pdf_bytes, "n": f"Recibo_SIMBOLO_{id_m}.pdf"}; st.session_state.carrito = []; st.session_state.f_key += 1; st.rerun()
             
@@ -553,7 +573,6 @@ else:
                 df_diario_raw['fecha_dt'] = pd.to_datetime(df_diario_raw['fecha'], errors='coerce')
                 df_mes = df_diario_raw[(df_diario_raw['fecha_dt'].dt.month == MESES_ANNO.index(mes_sel)+1) & (df_diario_raw['fecha_dt'].dt.year == anno_sel)]
                 
-                # Crear columna con enlaces clicables en Streamlit
                 df_mostrar = df_mes.drop(columns=['fecha_dt'])
                 st.dataframe(
                     df_mostrar.style.format(formatear_miles(df_mostrar)),
@@ -820,7 +839,7 @@ else:
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
                     try:
-                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "soportes_bancarios"]: client.execute(f"DELETE FROM {t}")
+                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "soportes_bancarios", "historial_tasas"]: client.execute(f"DELETE FROM {t}")
                     finally: client.close(); logout()
 
     # --- MIS RECIBOS ---
