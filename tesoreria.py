@@ -12,7 +12,7 @@ import hashlib
 import base64
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.1.0-Staging"
+VERSION = "1.2.0-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -25,7 +25,6 @@ CARGOS = ["Ninguno", "Venerable Maestro", "1er Vigilante", "2do Vigilante", "Ora
 TAB_ING = "📥 Ingresos"
 TAB_EGR = "📤 Egresos"
 TAB_CXC = "🧾 Cuentas x Cobrar"
-TAB_VER = "🔔 Verificaciones"
 TAB_DIA = "📖 Diario"
 TAB_REC = "🖨️ Recibos"
 TAB_DAS = "📊 Dashboards"
@@ -60,8 +59,8 @@ def init_db():
         client.execute('''CREATE TABLE IF NOT EXISTS asistencia (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, id_acta TEXT, nombre_qh TEXT, asistio INTEGER)''')
         client.execute('''CREATE TABLE IF NOT EXISTS hospitalario (id_registro INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, detalle TEXT, monto_usd REAL, tasa_bcv REAL, monto_bs REAL)''')
         client.execute('''CREATE TABLE IF NOT EXISTS cxc (id TEXT PRIMARY KEY, fecha TEXT, deudor TEXT, concepto TEXT, monto_usd REAL, monto_bs REAL, estatus TEXT DEFAULT 'Pendiente')''')
-        # Nueva Tabla para los Comprobantes de los QQHH
-        client.execute('''CREATE TABLE IF NOT EXISTS pagos_reportados (id TEXT PRIMARY KEY, fecha TEXT, nombre_qh TEXT, concepto TEXT, monto REAL, referencia TEXT, url_imagen TEXT, estatus TEXT DEFAULT 'Pendiente')''')
+        # Nueva Tabla para Auditoría de Soportes (Imágenes de Transferencias)
+        client.execute('''CREATE TABLE IF NOT EXISTS soportes_bancarios (id_transaccion TEXT PRIMARY KEY, url_soporte TEXT)''')
         
         try: client.execute("ALTER TABLE usuarios ADD COLUMN estatus TEXT DEFAULT 'Activo'")
         except: pass
@@ -83,6 +82,14 @@ def leer_datos(tabla="movimientos"):
     client = get_client()
     try:
         res = client.execute(f"SELECT * FROM {tabla}")
+        return pd.DataFrame([list(r) for r in res.rows], columns=res.columns)
+    finally:
+        client.close()
+
+def leer_datos_diario_auditoria():
+    client = get_client()
+    try:
+        res = client.execute("SELECT m.*, s.url_soporte FROM movimientos m LEFT JOIN soportes_bancarios s ON m.id LIKE s.id_transaccion || '-%'")
         return pd.DataFrame([list(r) for r in res.rows], columns=res.columns)
     finally:
         client.close()
@@ -269,7 +276,6 @@ if "logged_in" not in st.session_state:
                 res = client.execute("SELECT username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia FROM usuarios WHERE username=? AND estatus='Activo'", (u,))
                 if res.rows:
                     row = res.rows[0]; db_pwd = row[1]; hash_input = hash_clave(p)
-                    
                     if db_pwd == hash_input or db_pwd == p:
                         if db_pwd == p:
                             client.execute("UPDATE usuarios SET password=? WHERE username=?", (hash_input, u))
@@ -330,17 +336,17 @@ else:
             st.metric("Fondo Hosp (Bs)", f"{tot_bs_h:,.2f} Bs.".replace(',', 'X').replace('.', ',').replace('X', '.'))
             
         st.sidebar.divider()
-        st.sidebar.caption(f"⚙️ S.I.M.B.O.L.O. ERP - v{VERSION}")
+        st.sidebar.caption(f"⚙️ S.I.M.B.O.L.O. ERP - {VERSION}")
 
     m_tabs = []
     if info['rol'] != 'Administrador': m_tabs += [TAB_POR, TAB_MRE]
-    if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_CXC, TAB_VER, TAB_DIA, TAB_REC, TAB_DAS]
+    if info['teso']: m_tabs += [TAB_ING, TAB_EGR, TAB_CXC, TAB_DIA, TAB_REC, TAB_DAS]
     if info['sec']: m_tabs += [TAB_ACT]
     if is_hosp: m_tabs += [TAB_HOS]
     if info['rol'] == 'Administrador': m_tabs += [TAB_USU, TAB_CON]
     tabs = st.tabs(m_tabs)
 
-    # --- PORTAL DEL HERMANO (AHORA CON SUBIDA DE COMPROBANTES) ---
+    # --- PORTAL DEL HERMANO ---
     if TAB_POR in m_tabs:
         with tabs[m_tabs.index(TAB_POR)]:
             st.subheader(f"Bienvenido al Taller, {tratamiento_masonico} {info['nombre']}")
@@ -354,87 +360,6 @@ else:
             st.divider()
             if not m_pend: st.success("✨ ¡ESTÁS A PLOMO!")
             else: st.error(f"⚠️ Meses pendientes: {', '.join(m_pend)}")
-            
-            st.divider()
-            st.subheader("📤 Reportar Transferencia o Pago")
-            st.info("Adjunta la captura de tu transferencia. El Tesorero la verificará y te emitirá el recibo.")
-            
-            with st.form("f_reporte", clear_on_submit=True):
-                c1, c2 = st.columns(2)
-                con_p = c1.text_input("Concepto (Ej. Capitación Abril)")
-                monto_p = c1.number_input("Monto (Indique si es Bs o USD)", min_value=0.0)
-                ref_p = c2.text_input("Número de Referencia")
-                img_file = c2.file_uploader("Adjuntar Captura de Pantalla (JPG/PNG)", type=['jpg','png','jpeg'])
-                
-                if st.form_submit_button("Subir Comprobante y Reportar", type="primary"):
-                    if con_p and monto_p > 0 and ref_p and img_file:
-                        with st.spinner("Subiendo imagen de forma segura..."):
-                            api_key = st.secrets.get("IMGBB_API_KEY", "")
-                            if not api_key:
-                                st.error("⚠️ El Tesorero no ha configurado la API de imágenes (IMGBB_API_KEY).")
-                            else:
-                                url_imgbb = "https://api.imgbb.com/1/upload"
-                                payload = {
-                                    "key": api_key,
-                                    "image": base64.b64encode(img_file.read()).decode('utf-8')
-                                }
-                                try:
-                                    res = requests.post(url_imgbb, data=payload)
-                                    if res.status_code == 200:
-                                        url_final = res.json()['data']['url']
-                                        id_rep = f"REP-{datetime.now().strftime('%y%m%d%H%M%S')}"
-                                        client = get_client()
-                                        try:
-                                            client.execute("INSERT INTO pagos_reportados (id, fecha, nombre_qh, concepto, monto, referencia, url_imagen, estatus) VALUES (?,?,?,?,?,?,?,?)",
-                                                           (id_rep, str(datetime.now().date()), info['nombre'], con_p.upper(), monto_p, ref_p, url_final, 'Pendiente'))
-                                            st.success("✅ Comprobante enviado con éxito. El Tesorero lo verificará pronto.")
-                                        finally:
-                                            client.close()
-                                    else:
-                                        st.error("Hubo un error al conectar con el servidor de imágenes.")
-                                except Exception as e:
-                                    st.error(f"Error de conexión: {str(e)}")
-                    else:
-                        st.warning("Por favor completa todos los campos y adjunta la imagen de la transferencia.")
-
-    # --- MÓDULO TESORERO: VERIFICACIONES ---
-    if TAB_VER in m_tabs:
-        with tabs[m_tabs.index(TAB_VER)]:
-            st.subheader("🔔 Comprobantes Reportados por los QQ.·.HH.·.")
-            df_rep = leer_datos("pagos_reportados")
-            if not df_rep.empty:
-                pendientes = df_rep[df_rep['estatus'] == 'Pendiente']
-                if not pendientes.empty:
-                    for _, row in pendientes.iterrows():
-                        with st.expander(f"📄 {row['nombre_qh']} - Ref: {row['referencia']} ({row['fecha']})", expanded=True):
-                            col1, col2 = st.columns([1, 2])
-                            with col1:
-                                st.write(f"**Concepto:** {row['concepto']}")
-                                st.write(f"**Monto Reportado:** {row['monto']}")
-                                st.write(f"**Fecha de Subida:** {row['fecha']}")
-                                st.markdown(f"[🔍 Abrir imagen en grande]({row['url_imagen']})")
-                                
-                                st.divider()
-                                c_a, c_r = st.columns(2)
-                                if c_a.button("✅ Marcar Procesado", key=f"apr_{row['id']}", help="Marca que ya registraste esto en el Punto de Venta."):
-                                    client = get_client()
-                                    try: client.execute("UPDATE pagos_reportados SET estatus='Procesado' WHERE id=?", (row['id'],))
-                                    finally: client.close(); st.rerun()
-                                if c_r.button("❌ Rechazar", key=f"rec_{row['id']}"):
-                                    client = get_client()
-                                    try: client.execute("UPDATE pagos_reportados SET estatus='Rechazado' WHERE id=?", (row['id'],))
-                                    finally: client.close(); st.rerun()
-                            with col2:
-                                st.image(row['url_imagen'], use_container_width=True)
-                else:
-                    st.success("¡Caja al día! No hay comprobantes pendientes por revisar.")
-                
-                with st.expander("📚 Historial de Comprobantes Procesados o Rechazados"):
-                    historial = df_rep[df_rep['estatus'] != 'Pendiente']
-                    if not historial.empty:
-                        st.dataframe(historial[['fecha', 'nombre_qh', 'concepto', 'referencia', 'estatus']], use_container_width=True)
-            else:
-                st.info("Aún no se han recibido reportes de pago de los QQ.·.HH.·. en el sistema.")
 
     # --- INGRESOS ---
     if TAB_ING in m_tabs:
@@ -442,16 +367,22 @@ else:
             if 'carrito' not in st.session_state: st.session_state.carrito = []
             if 'u_recibo' not in st.session_state: st.session_state.u_recibo = None
             if 'f_key' not in st.session_state: st.session_state.f_key = 0
+            
             st.subheader("📝 Punto de Venta")
             c_g1, c_g2, c_g3, c_g4 = st.columns([2, 1.5, 1.5, 1])
             qh_in = c_g1.selectbox("QQ.·.HH.·.", lista_qh, key=f"qh_{st.session_state.f_key}")
             fecha_p = c_g2.date_input("Fecha Pago", datetime.now(), key=f"fp_{st.session_state.f_key}")
             met_in = c_g3.radio("Método", ["Transferencia", "Efectivo USD"], horizontal=True, key=f"mt_{st.session_state.f_key}")
+            
             comision_ajuste = False
+            img_file = None
             if met_in == "Transferencia":
                 comision_ajuste = st.checkbox("¿Aplica Comisión 1.5%? (Otro banco)", value=True, key=f"com_{st.session_state.f_key}")
+                img_file = st.file_uploader("📸 Adjuntar Comprobante (Opcional - Para Auditoría)", type=['jpg','png','jpeg'], key=f"img_{st.session_state.f_key}")
+                
             es_hist = c_g3.checkbox("Registro Histórico ($0 en caja)", key=f"hist_{st.session_state.f_key}")
             ts_in = c_g4.number_input("Tasa BCV", value=st.session_state.tasa_actual, key=f"ts_{st.session_state.f_key}", format="%.4f")
+            
             with st.expander("➕ Añadir Concepto", expanded=True):
                 c_i1, c_i2, c_i3 = st.columns([3,2,1])
                 cat_t = c_i1.selectbox("Concepto", CAT_INGRESO, key=f"cat_{st.session_state.f_key}")
@@ -466,21 +397,45 @@ else:
                 else: m_t_f, m_b_f, r_f = m_t, round(m_t * ts_in, 2), "EFECTIVO" if met_in == "Efectivo USD" else ref_t_input
                 if c_i3.button("➕ Añadir"):
                     st.session_state.carrito.append({"id_t": datetime.now().strftime('%f'), "categoria": cat_t, "detalle": d_t, "monto_usd": m_t_f, "monto_bs": m_b_f, "ref": r_f}); st.rerun()
+            
             if st.session_state.carrito:
                 for i, it in enumerate(st.session_state.carrito):
                     cols = st.columns([4,1,1,0.5]); cols[0].write(f"{it['categoria']}: {it['detalle']}"); cols[1].write(f"{it['monto_usd']}$"); cols[2].write(f"{it['monto_bs']}Bs")
                     if cols[3].button("🗑️", key=f"del_{it['id_t']}"): st.session_state.carrito.pop(i); st.rerun()
+                
                 if st.button("🚀 Procesar e Imprimir", type="primary", use_container_width=True):
-                    id_m = datetime.now().strftime('%y%m%d%H%M%S'); client = get_client()
+                    id_m = datetime.now().strftime('%y%m%d%H%M%S')
+                    url_final_img = ""
+                    
+                    # 1. Proceso de Subida a ImgBB si hay archivo
+                    if img_file:
+                        with st.spinner("Subiendo soporte a la nube para auditoría..."):
+                            api_key = st.secrets.get("IMGBB_API_KEY", "")
+                            if api_key:
+                                try:
+                                    res = requests.post("https://api.imgbb.com/1/upload", data={"key": api_key, "image": base64.b64encode(img_file.read()).decode('utf-8')})
+                                    if res.status_code == 200: url_final_img = res.json()['data']['url']
+                                except Exception as e: st.warning(f"Error al subir imagen: {e}")
+                    
+                    # 2. Inserción en Base de Datos
+                    client = get_client()
                     try:
                         for idx, item in enumerate(st.session_state.carrito):
                             client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"{id_m}-{idx}", str(fecha_p), qh_in, "INGRESO", item['categoria'], item['detalle'], item['ref'], item['monto_usd'], ts_in, item['monto_bs']))
                             if met_in == "Transferencia" and not es_hist and comision_ajuste:
                                 com_bs = round(item['monto_bs'] * 0.015, 2); com_usd = round(com_bs / ts_in, 2)
                                 client.execute("INSERT INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"COM-{id_m}-{idx}", str(fecha_p), 'BBVA Provincial', 'EGRESO', 'Comisión Bancaria', f'Comisión 1.5% - Ref: {item["ref"]}', 'COMIS. CRI OB REC', -abs(com_usd), ts_in, -abs(com_bs)))
+                        
+                        # Guardar el link de la foto en la tabla sombra de auditoría
+                        if url_final_img:
+                            client.execute("INSERT INTO soportes_bancarios (id_transaccion, url_soporte) VALUES (?,?)", (id_m, url_final_img))
+                            
                     finally: client.close()
+                    
+                    # 3. Generación de PDF
                     pdf_bytes = generar_recibo_multiple({'id': id_m, 'fecha': str(fecha_p), 'qh': qh_in, 'monto_usd': sum(x['monto_usd'] for x in st.session_state.carrito), 'monto_bs': sum(x['monto_bs'] for x in st.session_state.carrito), 'ref': st.session_state.carrito[0]['ref']}, st.session_state.carrito, dict_grados.get(qh_in, ""))
                     st.session_state.u_recibo = {"bytes": pdf_bytes, "n": f"Recibo_SIMBOLO_{id_m}.pdf"}; st.session_state.carrito = []; st.session_state.f_key += 1; st.rerun()
+            
             if st.session_state.u_recibo:
                 st.download_button("📥 Descargar PDF", st.session_state.u_recibo['bytes'], st.session_state.u_recibo['n'], mime="application/pdf", use_container_width=True)
                 if st.button("🔄 Nuevo Cobro"): st.session_state.u_recibo = None; st.rerun()
@@ -586,19 +541,29 @@ else:
                     if not cobradas.empty: st.dataframe(cobradas.style.format({'monto_usd': '{:,.2f} $', 'monto_bs': '{:,.2f} Bs'}), use_container_width=True)
             else: st.info("No existen registros de cuentas por cobrar en el sistema.")
 
-    # --- DIARIO ---
+    # --- DIARIO CON AUDITORÍA ---
     if TAB_DIA in m_tabs:
         with tabs[m_tabs.index(TAB_DIA)]:
-            st.subheader("📖 Libro Diario"); df_diario_raw = leer_datos()
+            st.subheader("📖 Libro Diario (Con Auditoría de Soportes)")
+            df_diario_raw = leer_datos_diario_auditoria()
             c_d1, c_d2 = st.columns(2)
             mes_sel = c_d1.selectbox("Filtrar Mes", MESES_ANNO, index=datetime.now().month-1); anno_sel = c_d2.selectbox("Año", [2025, 2026], index=1)
+            
             if not df_diario_raw.empty:
                 df_diario_raw['fecha_dt'] = pd.to_datetime(df_diario_raw['fecha'], errors='coerce')
                 df_mes = df_diario_raw[(df_diario_raw['fecha_dt'].dt.month == MESES_ANNO.index(mes_sel)+1) & (df_diario_raw['fecha_dt'].dt.year == anno_sel)]
-                st.dataframe(df_mes.drop(columns=['fecha_dt']).style.format(formatear_miles(df_mes)), use_container_width=True)
+                
+                # Crear columna con enlaces clicables en Streamlit
+                df_mostrar = df_mes.drop(columns=['fecha_dt'])
+                st.dataframe(
+                    df_mostrar.style.format(formatear_miles(df_mostrar)),
+                    column_config={"url_soporte": st.column_config.LinkColumn("Comprobante (Auditoría)")},
+                    use_container_width=True
+                )
+                
                 if not df_mes.empty:
-                    csv_diario = df_mes.drop(columns=['fecha_dt']).to_csv(index=False, encoding='utf-8-sig')
-                    st.download_button(f"📥 Exportar {mes_sel} {anno_sel} a Excel", data=csv_diario, file_name=f"Libro_Diario_{mes_sel}_{anno_sel}.csv", mime="text/csv")
+                    csv_diario = df_mostrar.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(f"📥 Exportar {mes_sel} {anno_sel} a Excel", data=csv_diario, file_name=f"Libro_Diario_Auditado_{mes_sel}_{anno_sel}.csv", mime="text/csv")
 
     # --- RECIBOS ---
     if TAB_REC in m_tabs:
@@ -849,14 +814,13 @@ else:
                     client.execute("UPDATE movimientos SET origen_destino = UPPER(origen_destino)")
                     client.execute("UPDATE asistencia SET nombre_qh = UPPER(nombre_qh)")
                     client.execute("UPDATE cxc SET deudor = UPPER(deudor)")
-                    client.execute("UPDATE pagos_reportados SET nombre_qh = UPPER(nombre_qh)")
                     st.success("Todos los nombres convertidos a MAYÚSCULAS exitosamente.")
                 finally: client.close(); st.rerun()
             if st.checkbox("Confirmo que deseo ELIMINAR los datos"):
                 if st.button("VACIAR TODA LA BASE DE DATOS"):
                     client = get_client()
                     try:
-                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "pagos_reportados"]: client.execute(f"DELETE FROM {t}")
+                        for t in ["movimientos", "actas", "asistencia", "hospitalario", "cxc", "soportes_bancarios"]: client.execute(f"DELETE FROM {t}")
                     finally: client.close(); logout()
 
     # --- MIS RECIBOS ---
