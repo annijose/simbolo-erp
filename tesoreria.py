@@ -13,7 +13,7 @@ import base64
 import random
 
 # --- 1. CONFIGURACIÓN Y VERSIÓN ---
-VERSION = "1.5.0-Staging"
+VERSION = "1.5.1-Staging"
 st.set_page_config(page_title="S.I.M.B.O.L.O. - Portal Logial", layout="wide", page_icon="🏛️")
 
 # --- 2. LISTAS MAESTRAS Y CONSTANTES ---
@@ -239,8 +239,6 @@ def generar_recibo_multiple(datos_master, items_carrito, grado_qh=""):
     y_actual = pdf.get_y()
     
     if os.path.exists("sello.png"): pdf.image("sello.png", x=40, y=y_actual, w=35)
-    
-    # Soporte para la firma del tesorero específica, o la genérica como respaldo
     if os.path.exists("firma_tes.png"): pdf.image("firma_tes.png", x=140, y=y_actual, w=35)
     elif os.path.exists("firma.png"): pdf.image("firma.png", x=140, y=y_actual, w=35)
         
@@ -321,17 +319,9 @@ def generar_carta_plomo_pdf(nombre_qh, cedula_qh, grado_qh, cargo_qh, mes_plomo)
     
     y_actual = pdf.get_y()
     
-    # Colocación de las 3 firmas con base en sus coordenadas exactas
-    # Columna 1 (Secretario): Centro aprox X=40, por ende imagen en X=25
     if os.path.exists("firma_sec.png"): pdf.image("firma_sec.png", x=25, y=y_actual-15, w=30)
-    
-    # Columna 2 (VM): Centro aprox X=105, por ende imagen en X=90
     if os.path.exists("firma_vm.png"): pdf.image("firma_vm.png", x=90, y=y_actual-15, w=30)
-    
-    # Columna 3 (Tesorero): Centro aprox X=170, por ende imagen en X=155
     if os.path.exists("firma_tes.png"): pdf.image("firma_tes.png", x=155, y=y_actual-15, w=30)
-    
-    # El sello de la Logia ubicado en el costado izquierdo, cerca del Secretario
     if os.path.exists("sello.png"): pdf.image("sello.png", x=12, y=y_actual-20, w=25)
         
     pdf.set_font('Arial', 'B', 10)
@@ -463,14 +453,19 @@ else:
                 esta_a_plomo_mes_curso = len(m_pend) == 0
                 
                 if esta_a_plomo_mes_curso:
-                    ultimo_mes_pagado = "Diciembre (Solvencia Anual)" if es_solvente_total else MESES_ANNO[m_idx-1]
+                    if es_solvente_total:
+                        ultimo_mes_pagado = "Diciembre (Solvencia Anual)"
+                    else:
+                        meses_pagados_reales = [m for m in MESES_ANNO if m in m_pagados]
+                        ultimo_mes_pagado = meses_pagados_reales[-1] if meses_pagados_reales else MESES_ANNO[m_idx-1]
+                        
                     cedula_qh = st.text_input("Cédula de Identidad (Requerida para el documento):", key="cedula_plomo")
                     
                     if cedula_qh:
                         pdf_carta = generar_carta_plomo_pdf(info['nombre'], cedula_qh, info['grado'], info['cargo'], ultimo_mes_pagado)
                         st.download_button("📥 Descargar Carta a Plomo (PDF)", data=pdf_carta, file_name=f"Carta_Plomo_{info['nombre'].replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
                 else:
-                    st.error(f"🚫 Documento Bloqueado: Para emitir la Carta a Plomo de forma automática, debes estar solvente hasta el mes en curso ({MESES_ANNO[m_idx-1]}).")
+                    st.error(f"🚫 Documento Bloqueado: Para emitir la Carta a Plomo de forma automática, debes estar solvente al menos hasta el mes en curso ({MESES_ANNO[m_idx-1]}).")
                     st.warning(f"Meses con deuda para desbloquear el documento: {', '.join(m_pend)}")
 
     # --- INGRESOS ---
@@ -981,11 +976,11 @@ else:
                         username = nombre.lower().replace(" ", "")
                         client.execute("INSERT OR IGNORE INTO usuarios (username, password, nombre_qh, grado, rol, perm_tesoreria, perm_secretaria, cargo_logia, estatus) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 'Activo')", (username, clave_hash, nombre, grado, rol, cargo))
 
-                    meses = ["Enero", "Febrero", "Marzo", "Abril"]
+                    meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto"]
                     client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", ('SI-DEMO-1', str(datetime.now().date()), 'SIMBOLO', 'INGRESO', 'SALDO INICIAL', 'Apertura Banco', 'INICIAL', 0.0, 45.00, 1500.00))
                     
                     for i, (nombre, _, _, _) in enumerate(nombres_demo[:6]):
-                        meses_pagados = random.sample(meses, random.randint(1, 3))
+                        meses_pagados = random.sample(meses, random.randint(1, 5))
                         for mes in meses_pagados:
                             fecha_pago = (datetime.now() - timedelta(days=random.randint(1, 60))).strftime('%Y-%m-%d')
                             client.execute("INSERT OR IGNORE INTO movimientos VALUES (?,?,?,?,?,?,?,?,?,?)", (f"DEMO-{i}-{mes}", fecha_pago, nombre, "INGRESO", "Capitación Mensual", mes, f"REF-{random.randint(1000,9999)}", 0.0, 45.5, 682.5))
